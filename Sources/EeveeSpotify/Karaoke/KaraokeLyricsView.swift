@@ -125,7 +125,7 @@ private struct KaraokeScrollingLines: View {
     @State private var naturalContentHeight: CGFloat = .infinity
 
     private var horizontalPadding: CGFloat { max(20, size.width * 0.05) }
-    private var fontSize: CGFloat { 1.3 * min(36, max(28, size.width * 0.075)) }
+    private var fontSize: CGFloat { 1.3 * 0.95 * min(36, max(28, size.width * 0.075)) }
     @StateObject private var anchorLayout = KaraokeTextPlanCache()
     private var focus: UnitPoint {
         let lineHeight = UIFont.systemFont(ofSize: fontSize, weight: .bold).lineHeight + fontSize * 0.23

@@ -25,6 +25,21 @@ final class KaraokeOverlayPresenter {
     }
     private static var focused = false
     private static var suspended = false
+    private static var preparingAppearance = false
+    private static var mounting = false
+    private struct VideoState {
+        weak var view: UIView?
+        let alpha: CGFloat
+        let hidden: Bool
+        let interactive: Bool
+        let accessibilityHidden: Bool
+        init(_ view: UIView) {
+            self.view = view; alpha = view.alpha; hidden = view.isHidden
+            interactive = view.isUserInteractionEnabled
+            accessibilityHidden = view.accessibilityElementsHidden
+        }
+    }
+    private static var videoStates: [ObjectIdentifier: VideoState] = [:]
     private static var nativeTouchActive = false
     private static var compactTouch = false
     private static var focusHeartbeat: DispatchSourceTimer?
@@ -83,17 +98,64 @@ final class KaraokeOverlayPresenter {
         if replaced { interact() }
     }
 
+    static func preparePlayer(_ controller: UIViewController) {
+        preparingAppearance = true
+        suspended = false
+        retryCount = 0
+        playerRoot = controller.viewIfLoaded
+        guard isEnabled, UserDefaults.karaokeOptions.enabled,
+              UserDefaults.lyricsSource.supportsCustomLyricsView, hasCachedLyrics else { return }
+        controller.viewIfLoaded?.layoutIfNeeded()
+        var pending = controller.children
+        while let child = pending.popLast() {
+            pending.append(contentsOf: child.children)
+            let name = NSStringFromClass(type(of: child))
+            if name.contains("NowPlaying_ContentLayerPlatformImpl"), name.contains("ContentLayerViewController") {
+                child.loadViewIfNeeded()
+                if let root = child.viewIfLoaded { registerCanvas(root) }
+            }
+        }
+        writeDebugLog("[Karaoke][lifecycle] preparing cached lyrics before presentation")
+        restoreIfNeeded()
+    }
+
+    static func suppressVideoSwitch(_ view: UIView) {
+        guard isPresented, !suspended else { return }
+        if let window = canvas?.window, let ownerWindow = view.window, ownerWindow !== window { return }
+        let name = NSStringFromClass(type(of: view))
+        let identifier = (view.accessibilityIdentifier ?? "").lowercased().filter { $0.isLetter || $0.isNumber }
+        guard name.contains("AudioVideoSwitch") || name.contains("AudioVideoElementProps") ||
+              identifier.contains("switchtovideo") || identifier.contains("audiovideoswitch") else { return }
+        let key = ObjectIdentifier(view)
+        if videoStates[key] == nil {
+            videoStates[key] = VideoState(view)
+            writeDebugLog("[Karaoke][video] suppressed \(name)")
+        }
+        view.isHidden = true
+        view.alpha = 0
+        view.isUserInteractionEnabled = false
+        view.accessibilityElementsHidden = true
+    }
+
+    private static var hasCachedLyrics: Bool {
+        let tracker = KaraokePlaybackTracker.shared
+        guard let track = tracker.playerReportedTrackId() ?? tracker.currentTrackId() else { return false }
+        return KaraokeLyricsStore.shared.lyrics(forTrackId: track) != nil
+    }
+
     static func resumePlayer(_ controller: UIViewController) {
         suspended = false
+        preparingAppearance = false
         playerRoot = controller.viewIfLoaded
         loggedRoot = nil
         writeDebugLog("[Karaoke][lifecycle] Now Playing appeared; lyrics enabled=\(isEnabled)")
         restoreIfNeeded()
-        if isPresented { interact() }
+        if isPresented { layoutPlayer(controller); interact() }
     }
 
     static func suspendPlayer() {
         suspended = true
+        preparingAppearance = false
         writeDebugLog("[Karaoke][lifecycle] Now Playing disappeared; preserve lyrics=\(isEnabled)")
         removeHosting()
     }
@@ -153,6 +215,7 @@ final class KaraokeOverlayPresenter {
                     writeDebugLog("[Karaoke][hierarchy] \(name) id=\(view.accessibilityIdentifier ?? "-") frame=\(view.convert(view.bounds, to: root)) alpha=\(view.alpha)")
                 }
             }
+            suppressVideoSwitch(view)
             PlayerDeclutter.hideLatePlayerElement(view)
             queue.append(contentsOf: view.subviews)
             if let scroll = view as? UIScrollView,
@@ -288,7 +351,7 @@ final class KaraokeOverlayPresenter {
     }
 
     static func registerCanvas(_ root: UIView) {
-        guard root.window != nil else { return }
+        guard root.window != nil || preparingAppearance else { return }
         if canvas !== root, isPresented { removeHosting() }
         canvas = root
         if isPresented { updateFrame() } else { restoreIfNeeded() }
@@ -365,7 +428,7 @@ final class KaraokeOverlayPresenter {
         refreshFocusGeometry()
         guard let canvas, let container, let hosting else { return }
         guard canvas.window != nil, let frame = lyricsFrame(in: canvas) else {
-            container.isHidden = true
+            container.isHidden = !preparingAppearance
             return
         }
         container.isHidden = false
@@ -386,6 +449,7 @@ final class KaraokeOverlayPresenter {
     }
 
     static func detached(_ candidate: UIView) {
+        guard !preparingAppearance else { return }
         if canvas?.window == nil { removeHosting() }
     }
 
@@ -407,13 +471,15 @@ final class KaraokeOverlayPresenter {
     }
 
     static func restoreIfNeeded() {
-        guard !suspended else { return }
-        guard isEnabled, UserDefaults.karaokeOptions.enabled, UserDefaults.lyricsSource.supportsCustomLyricsView,
-              !isPresented, !restoreScheduled else { return }
+        guard !suspended, !mounting, isEnabled, UserDefaults.karaokeOptions.enabled,
+              UserDefaults.lyricsSource.supportsCustomLyricsView, !isPresented else { return }
+        // Cached content mounts synchronously, including while the native player is still offscreen.
+        if hasCachedLyrics, show(animated: false, allowDetached: preparingAppearance) { return }
+        guard !restoreScheduled else { return }
         restoreScheduled = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
             restoreScheduled = false
-            guard isEnabled else { return }
+            guard isEnabled, !isPresented, !suspended else { return }
             if !show(), retryCount < 4 {
                 retryCount += 1
                 restoreIfNeeded()
@@ -421,7 +487,18 @@ final class KaraokeOverlayPresenter {
         }
     }
 
-    private static func show() -> Bool {
+    private static func preparationFrame(in canvas: UIView) -> CGRect? {
+        guard canvas.bounds.width > 100, canvas.bounds.height > 200 else { return nil }
+        let previous = viewport.frame
+        let ratio = previous.width > 100 ? canvas.bounds.width / previous.width : 1
+        let top = previous.height > 100 ? min(previous.minY * ratio, canvas.bounds.height * 0.35) : canvas.bounds.height * 0.13
+        let bottom = previous.height > 100 ? min(canvas.bounds.height, previous.maxY * ratio) : canvas.bounds.height * 0.68
+        guard bottom - top > 100 else { return nil }
+        return CGRect(x: 0, y: top, width: canvas.bounds.width, height: bottom - top)
+    }
+
+    private static func show(animated: Bool = true, allowDetached: Bool = false) -> Bool {
+        guard !mounting else { return false }
         dismissing = false
         _ = activityObserver
         if isPresented {
@@ -430,14 +507,17 @@ final class KaraokeOverlayPresenter {
             interact()
             return true
         }
-        guard #available(iOS 15.0, *), let canvas, canvas.window != nil,
-              let frame = lyricsFrame(in: canvas), UserDefaults.karaokeOptions.enabled,
+        guard #available(iOS 15.0, *), let canvas, canvas.window != nil || allowDetached,
+              let frame = lyricsFrame(in: canvas) ?? (allowDetached ? preparationFrame(in: canvas) : nil), UserDefaults.karaokeOptions.enabled,
               UserDefaults.lyricsSource.supportsCustomLyricsView else { return false }
+        if allowDetached, let playerRoot, !canvas.isDescendant(of: playerRoot) { return false }
         var responder: UIResponder? = canvas
         while responder != nil && !(responder is UIViewController) { responder = responder?.next }
         guard let controller = responder as? UIViewController else { return false }
         let tracker = KaraokePlaybackTracker.shared
         guard let trackId = tracker.playerReportedTrackId() ?? tracker.currentTrackId() else { return false }
+        mounting = true
+        defer { mounting = false }
         viewport.frame = frame
         let child = UIHostingController(rootView: KaraokeLyricsView(trackId: trackId,
             lyrics: KaraokeLyricsStore.shared.lyrics(forTrackId: trackId), viewport: viewport, onDismiss: dismiss))
@@ -447,13 +527,16 @@ final class KaraokeOverlayPresenter {
         let plane = KaraokeCanvasContainer(frame: canvas.bounds)
         plane.activeRect = frame
         plane.clipsToBounds = true
+        plane.backgroundColor = .black
         controller.addChild(child)
         canvas.addSubview(plane)
         plane.addSubview(child.view)
         child.view.frame = plane.bounds
         child.didMove(toParent: controller)
-        plane.alpha = 0
-        UIView.animate(withDuration: 0.25) { plane.alpha = 1 }
+        child.view.setNeedsLayout()
+        child.view.layoutIfNeeded()
+        plane.alpha = animated ? 0 : 1
+        if animated { UIView.animate(withDuration: 0.25) { plane.alpha = 1 } }
         container = plane
         hosting = child
         isPresented = true
@@ -461,7 +544,7 @@ final class KaraokeOverlayPresenter {
         updateFrame()
         interact()
         if let controller = playerRoot?.next as? UIViewController { layoutPlayer(controller) }
-        writeDebugLog("[Karaoke] Canvas replacement mounted; lyrics viewport \(frame)")
+        writeDebugLog("[Karaoke] Canvas replacement mounted; lyrics viewport \(frame) cached=\(!animated) detached=\(canvas.window == nil)")
         return true
     }
 
@@ -492,6 +575,14 @@ final class KaraokeOverlayPresenter {
             saved.view?.bounces = saved.bounces
         }
         outerScrolls.removeAll()
+        isPresented = false
+        for saved in videoStates.values {
+            saved.view?.isHidden = saved.hidden
+            saved.view?.alpha = saved.alpha
+            saved.view?.isUserInteractionEnabled = saved.interactive
+            saved.view?.accessibilityElementsHidden = saved.accessibilityHidden
+        }
+        videoStates.removeAll()
         guard let hosting else { return }
         hosting.willMove(toParent: nil)
         hosting.view.removeFromSuperview()

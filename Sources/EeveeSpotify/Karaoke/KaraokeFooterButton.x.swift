@@ -131,6 +131,11 @@ class KaraokeCanvasUnitHook: ClassHook<UIViewController> {
     typealias Group = KaraokeFooterGroup
     static let targetName = "_TtC35NowPlaying_ContentLayerPlatformImpl26ContentLayerViewController"
 
+    func viewWillAppear(_ animated: Bool) {
+        orig.viewWillAppear(animated)
+        if let view = target.viewIfLoaded { KaraokeOverlayPresenter.registerCanvas(view) }
+    }
+
     func viewDidLayoutSubviews() {
         orig.viewDidLayoutSubviews()
         if let view = target.viewIfLoaded { KaraokeOverlayPresenter.registerCanvas(view) }
@@ -192,6 +197,10 @@ class KaraokeStockLyricsHeaderHook: ClassHook<UIView> {
 class KaraokePlayerLifecycleHook: ClassHook<UIViewController> {
     typealias Group = KaraokeFooterGroup
     static let targetName = "_TtC21NowPlaying_ScrollImpl23NPVScrollViewController"
+    func viewWillAppear(_ animated: Bool) {
+        KaraokeOverlayPresenter.preparePlayer(target)
+        orig.viewWillAppear(animated)
+    }
     func viewDidAppear(_ animated: Bool) {
         orig.viewDidAppear(animated)
         KaraokeOverlayPresenter.resumePlayer(target)
@@ -203,5 +212,18 @@ class KaraokePlayerLifecycleHook: ClassHook<UIViewController> {
     func viewDidLayoutSubviews() {
         orig.viewDidLayoutSubviews()
         KaraokeOverlayPresenter.layoutPlayer(target)
+    }
+}
+
+class KaraokeVideoSwitchHook: ClassHook<UIView> {
+    typealias Group = KaraokeFooterGroup
+    static let targetName = "_TtC22NowPlaying_ElementsKit22AudioVideoSwitchButton"
+    func layoutSubviews() {
+        orig.layoutSubviews()
+        KaraokeOverlayPresenter.suppressVideoSwitch(target)
+    }
+    func didMoveToWindow() {
+        orig.didMoveToWindow()
+        KaraokeOverlayPresenter.suppressVideoSwitch(target)
     }
 }
