@@ -56,7 +56,7 @@ struct KaraokeLineView: View {
         .frame(width: availableWidth)
         .opacity(singing ? 1 : (currentMs >= layout.endMs || distance < 0 ? 0.46 : 0.56))
         .blur(radius: singing ? 0 : min(1, CGFloat(abs(distance)) * CGFloat(blurIntensity) * 0.1))
-        .animation(.easeOut(duration: 0.2), value: singing)
+        .animation(.easeInOut(duration: 0.3), value: singing)
     }
 }
 

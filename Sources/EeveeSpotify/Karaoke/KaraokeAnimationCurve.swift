@@ -81,6 +81,12 @@ struct KaraokeMotionSprings {
     var offset = KaraokeSpring(position: 0, frequency: 1.45, damping: 0.4)
     var glow = KaraokeSpring(position: 0, frequency: 1.18, damping: 0.56)
 
+    var isAtRest: Bool {
+        abs(scale.position - 1) < 0.001 && abs(scale.velocity) < 0.005
+            && abs(offset.position) < 0.00005 && abs(offset.velocity) < 0.0003
+            && abs(glow.position) < 0.002 && abs(glow.velocity) < 0.01
+    }
+
     mutating func step(target: KaraokeMotionSample, dt: Double, snap: Bool) -> KaraokeMotionSample {
         KaraokeMotionSample(
             scale: scale.step(goal: target.scale, dt: dt, snap: snap),
@@ -98,18 +104,19 @@ struct KaraokeWordMotion {
     private var previousMs: Int?
     private var previousStamp: TimeInterval?
 
+    var isAtRest: Bool { wordSprings.isAtRest && letterSprings.allSatisfy { $0.isAtRest } }
+
     mutating func update(currentMs: Int, startMs: Int, endMs: Int, letterCount: Int, active: Bool, stamp: TimeInterval) {
         let dt = min(0.05, max(0, stamp - (previousStamp ?? stamp)))
-        let snap = previousMs == nil || abs(currentMs - (previousMs ?? currentMs)) > 500
-            || currentMs < startMs || !active
+        let snap = previousMs.map { abs(currentMs - $0) > 500 } ?? (currentMs - startMs > 250 && active)
         previousMs = currentMs
         previousStamp = stamp
         let progress = min(1, max(0, Double(currentMs - startMs) / Double(max(1, endMs - startMs))))
-        let target = KaraokeMotionSample(
+        let target = active && currentMs >= startMs ? KaraokeMotionSample(
             scale: KaraokeAnimationCurve.wordScale.value(at: progress),
             offset: KaraokeAnimationCurve.yOffset.value(at: progress),
             glow: KaraokeAnimationCurve.glow.value(at: progress)
-        )
+        ) : KaraokeMotionSample()
         word = wordSprings.step(target: target, dt: dt, snap: snap)
         guard letterCount > 0 else { letters = []; return }
         if letterSprings.count != letterCount {
@@ -122,7 +129,7 @@ struct KaraokeWordMotion {
             let distance = Double(abs(index - activeIndex))
             let falloff = 1 / (1 + pow(distance, 2.8))
             let glowFalloff = 1 / (1 + distance * 0.9)
-            let sung = progress >= 1
+            let sung = progress >= 1 || !active
             let future = index > activeIndex || currentMs < startMs
             let baseScale = KaraokeAnimationCurve.letterScale.value(at: localProgress)
             let baseOffset = KaraokeAnimationCurve.letterYOffset.value(at: localProgress)

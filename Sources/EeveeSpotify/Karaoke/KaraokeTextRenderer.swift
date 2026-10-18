@@ -30,6 +30,7 @@ final class KaraokeTextPlan {
     let rtl: Bool
     let text: String
     let inkColor: UIColor
+    let baseInk: CGColor
     let dimInk: CGColor
     let brightInk: CGColor
     let glowInk: CGColor
@@ -40,6 +41,7 @@ final class KaraokeTextPlan {
 
     init(words: [[KaraokeSyllableDto]], width: CGFloat, fontSize: CGFloat, alignment: HorizontalAlignment, rtl: Bool, inkColor: UIColor = .white) {
         self.inkColor = inkColor
+        baseInk = inkColor.cgColor
         let dim = inkColor.withAlphaComponent(0.50).cgColor
         let bright = inkColor.withAlphaComponent(0.95).cgColor
         dimInk = dim
@@ -161,6 +163,7 @@ final class KaraokeTextCanvas: UIView {
     private var plan: KaraokeTextPlan?
     private var currentMs = 0
     private var active = false
+    private var renderingMotion = false
     private var motions: [KaraokeWordMotion] = []
     private var onSeek: (() -> Void)?
     private var usesPlaybackClock = false
@@ -208,24 +211,25 @@ final class KaraokeTextCanvas: UIView {
         let position = usesPlaybackClock ? KaraokePlaybackTracker.shared.currentPositionMs() + timingOffsetMs : currentMs
         updateMotion(at: position)
         updateDisplayLink()
-        if changed || active { setNeedsDisplay() }
+        if changed || renderingMotion { setNeedsDisplay() }
     }
 
     private func updateMotion(at position: Int) {
         currentMs = position
         guard let plan else { return }
-        if active {
+        if active || renderingMotion {
             let stamp = ProcessInfo.processInfo.systemUptime
             for index in plan.segments.indices {
                 let part = plan.segments[index]
                 motions[index].update(currentMs: position, startMs: part.timing.startMs, endMs: part.timing.endMs,
-                    letterCount: !plan.rtl && part.timing.endMs - part.timing.startMs >= 1000 ? part.glyphs.count : 0, active: true, stamp: stamp)
+                    letterCount: !plan.rtl && part.timing.endMs - part.timing.startMs >= 1000 ? part.glyphs.count : 0, active: active, stamp: stamp)
             }
         }
+        renderingMotion = active || motions.contains { !$0.isAtRest }
     }
 
     private var canAnimate: Bool {
-        guard usesPlaybackClock, active, let window, bounds.width > 0, bounds.height > 0,
+        guard usesPlaybackClock, renderingMotion, let window, bounds.width > 0, bounds.height > 0,
               convert(bounds, to: window).intersects(window.bounds) else { return false }
         var view: UIView? = self
         while let current = view {
@@ -253,7 +257,7 @@ final class KaraokeTextCanvas: UIView {
     }
 
     private func transform(for glyph: KaraokeTextPlan.Glyph, in plan: KaraokeTextPlan) -> (CGAffineTransform, KaraokeMotionSample) {
-        guard active, glyph.segment < motions.count else { return (.init(translationX: glyph.position.x, y: glyph.position.y), KaraokeMotionSample()) }
+        guard renderingMotion, glyph.segment < motions.count else { return (.init(translationX: glyph.position.x, y: glyph.position.y), KaraokeMotionSample()) }
         let motion = motions[glyph.segment]
         let letter = glyph.rank < motion.letters.count
         let sample = letter ? motion.letters[glyph.rank] : motion.word
@@ -281,7 +285,7 @@ final class KaraokeTextCanvas: UIView {
         context.translateBy(x: 0, y: plan.height)
         context.scaleBy(x: 1, y: -1)
         context.textMatrix = .identity
-        if !active { CTFrameDraw(plan.frame, context); context.restoreGState(); return }
+        if !renderingMotion { CTFrameDraw(plan.frame, context); context.restoreGState(); return }
         for glyph in plan.glyphs {
             let part = plan.segments[glyph.segment]
             let progress = min(1, max(0, Double(currentMs - part.timing.startMs) / Double(max(1, part.timing.endMs - part.timing.startMs))))
@@ -298,8 +302,8 @@ final class KaraokeTextCanvas: UIView {
                     context.setShadow(offset: .zero, blur: 0, color: nil)
                 }
                 context.addPath(path); context.clip()
-                if edge <= 0 || edge >= 1 {
-                    context.setFillColor(edge <= 0 ? plan.dimInk : plan.brightInk)
+                if !active || edge <= 0 || edge >= 1 {
+                    context.setFillColor(!active ? plan.baseInk : (edge <= 0 ? plan.dimInk : plan.brightInk))
                     context.fill(glyph.bounds.insetBy(dx: -1, dy: -1))
                 } else if let gradient = plan.highlightGradient {
                     let origin = glyph.rtl ? glyph.bounds.maxX : glyph.bounds.minX
@@ -311,7 +315,7 @@ final class KaraokeTextCanvas: UIView {
             } else {
                 var value = glyph.value
                 var zero = CGPoint.zero
-                context.setFillColor(progress > 0 ? plan.brightInk : plan.dimInk)
+                context.setFillColor(!active ? plan.baseInk : (progress > 0 ? plan.brightInk : plan.dimInk))
                 CTFontDrawGlyphs(glyph.font, &value, &zero, 1, context)
             }
             context.restoreGState()
