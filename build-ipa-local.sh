@@ -12,6 +12,7 @@
 #   4. cyan inject deb-contents (dylib + framework + bundle) into vanilla IPA.
 #   5. ipapatch LC-inject zxPluginsInject into main exec + every appex.
 #   6. Strip Watch.app if it survived cyan -du.
+#      Include OpenSpotifySafariExtension, matching the patched workflow.
 #
 # Requires: theos, cyan (pyzule-rw), ipapatch, dpkg, ldid, plutil.
 
@@ -69,14 +70,20 @@ cyan -i "$VANILLA_IPA" -o "$OUT_IPA" -f "${INJECT[@]}" -c 9 -m 15.0 -du
 color "6/7  ipapatch LC-inject zxPluginsInject"
 ipapatch --input "$OUT_IPA" --inplace --noconfirm --dylib packages/zxPluginsInject.dylib
 
-# Belt-and-suspenders: cyan -du strips appex/Watch but verify.
+# Match the patched workflow's Safari extension and Watch cleanup.
+EXT_DIR=$(mktemp -d)
+trap 'rm -rf "$EXT_DIR"' EXIT
+git clone --depth 1 https://github.com/BillyCurtis/OpenSpotifySafariExtension.git "$EXT_DIR"
+EXT_SRC="$EXT_DIR/OpenSpotifySafariExtension.appex"
+[ -d "$EXT_SRC" ] || { echo "OpenSpotifySafariExtension.appex not found" >&2; exit 1; }
 cd "$OUT_DIR"
 rm -rf Payload
 unzip -q "$(basename "$OUT_IPA")"
-if [ -d "Payload/Spotify.app/Watch" ]; then
-    rm -rf Payload/Spotify.app/Watch
-    zip -qry "$(basename "$OUT_IPA")" Payload
-fi
+mkdir -p Payload/Spotify.app/PlugIns
+cp -R "$EXT_SRC" Payload/Spotify.app/PlugIns/
+rm -rf Payload/Spotify.app/Watch Payload/Spotify.app/com.apple.WatchPlaceholder
+rm -f "$(basename "$OUT_IPA")"
+zip -qry "$(basename "$OUT_IPA")" Payload
 rm -rf Payload
 cd - >/dev/null
 
