@@ -35,6 +35,7 @@ struct KaraokeFlowLayout<Content: View>: View {
 
 @available(iOS 16.0, *)
 private struct KaraokeFlowLayoutImpl: Layout {
+    @Environment(\.layoutDirection) private var direction
     let spacing: CGFloat
     var alignment: HorizontalAlignment = .center
 
@@ -58,7 +59,7 @@ private struct KaraokeFlowLayoutImpl: Layout {
         var x: CGFloat = 0
 
         for (index, subview) in subviews.enumerated() {
-            let size = subview.sizeThatFits(.unspecified)
+            let size = subview.sizeThatFits(ProposedViewSize(width: maxWidth, height: nil))
             if x > 0 && x + size.width > maxWidth {
                 rows.append(current)
                 current = Row()
@@ -106,7 +107,8 @@ private struct KaraokeFlowLayoutImpl: Layout {
 
             for (offset, index) in row.indices.enumerated() {
                 let size = row.sizes[offset]
-                subviews[index].place(at: CGPoint(x: x, y: y), proposal: .unspecified)
+                let physicalX = direction == .rightToLeft ? bounds.maxX - (x - bounds.minX) - size.width : x
+                subviews[index].place(at: CGPoint(x: physicalX, y: y), proposal: ProposedViewSize(size))
                 x += size.width + spacing
             }
             y += row.height + spacing

@@ -1,5 +1,6 @@
 import SwiftUI
 import MetalKit
+import EeveeSpotifyC
 
 /// Renders the album-art domain-warp background using the Metal shader in
 /// KaraokeBackgroundShader.metal — the native equivalent of the real
@@ -22,18 +23,11 @@ final class KaraokeBackgroundRenderer: NSObject, MTKViewDelegate {
         guard let queue = device.makeCommandQueue() else { return nil }
         self.commandQueue = queue
 
-        // Theos has no built-in Metal shader compilation step (unlike an
-        // Xcode app target's build phases), so the Makefile compiles
-        // KaraokeBackgroundShader.metal by hand into a .metallib staged
-        // at this fixed path alongside the tweak's own dylib, rather than
-        // relying on device.makeDefaultLibrary(bundle:) — which expects
-        // Xcode's automatic shader embedding and would not find a
-        // manually-built .metallib here. UNTESTED end-to-end: the
-        // Makefile step that produces this file could not be verified
-        // (no Theos/Metal toolchain available), so if this path doesn't
-        // exist or doesn't load, check the Makefile's internal-stage
-        // Metal compile step first.
-        let metallibPath = "/Library/MobileSubstrate/DynamicLibraries/KaraokeBackgroundShader.metallib"
+        // The injected resource bundle travels with both sideloaded and jailbreak builds.
+        let resourceBundle = Bundle.main.url(forResource: "EeveeSpotify", withExtension: "bundle")
+            .flatMap { Bundle(url: $0) }
+        let metallibPath = resourceBundle?.path(forResource: "KaraokeBackgroundShader", ofType: "metallib")
+            ?? EeveeJBRootPath("/Library/Application Support/EeveeSpotify.bundle/KaraokeBackgroundShader.metallib")
         guard let library = try? device.makeLibrary(filepath: metallibPath),
               let vertexFn = library.makeFunction(name: "karaoke_bg_vertex"),
               let fragmentFn = library.makeFunction(name: "karaoke_bg_fragment") else {

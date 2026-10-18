@@ -22,17 +22,21 @@ struct KaraokeLineView: View {
     let isActiveLine: Bool
     let availableWidth: CGFloat
     let alignment: HorizontalAlignment
+    let fontSize: CGFloat
+    let distance: Int
+    let isBrowsing: Bool
+    let blurIntensity: Double
 
     var body: some View {
-        KaraokeFlowLayout(spacing: 8, alignment: alignment) {
+        KaraokeFlowLayout(spacing: fontSize * 0.23, alignment: alignment) {
             ForEach(Array(layout.words.enumerated()), id: \.offset) { _, word in
-                KaraokeWordView(syllables: word, currentMs: currentMs, isActiveLine: isActiveLine, isRTL: layout.isRTL)
+                KaraokeWordView(syllables: word, currentMs: currentMs, isActiveLine: isActiveLine, isRTL: layout.isRTL, fontSize: fontSize)
             }
         }
         .frame(width: availableWidth)
-        .opacity(isActiveLine ? 1.0 : 0.4)
-        .blur(radius: isActiveLine ? 0 : CGFloat(UserDefaults.karaokeOptions.blurIntensity))
-        .scaleEffect(isActiveLine ? 1.0 : 0.97, anchor: .center)
+        .opacity(isActiveLine || isBrowsing ? 1.0 : (distance < 0 ? 0.46 : 0.56))
+        .blur(radius: isActiveLine || isBrowsing ? 0 : min(4, CGFloat(abs(distance)) * CGFloat(blurIntensity) * 0.4))
+        .scaleEffect(isActiveLine || isBrowsing ? 1.0 : 0.98, anchor: UnitPoint(x: alignment == .leading ? 0 : (alignment == .trailing ? 1 : 0.5), y: 0.5))
         .animation(.easeOut(duration: 0.35), value: isActiveLine)
         // Mirrors word/row order for RTL lines; the fill gradient is flipped separately below.
         .environment(\.layoutDirection, layout.isRTL ? .rightToLeft : .leftToRight)
@@ -45,6 +49,7 @@ private struct KaraokeWordView: View {
     let currentMs: Int
     let isActiveLine: Bool
     let isRTL: Bool
+    let fontSize: CGFloat
 
     private var wordStartMs: Int { syllables.first?.startMs ?? 0 }
     private var wordEndMs: Int { syllables.last?.endMs ?? wordStartMs }
@@ -68,13 +73,14 @@ private struct KaraokeWordView: View {
                     syllable: syllable,
                     currentMs: currentMs,
                     isActiveLine: isActiveLine,
-                    isRTL: isRTL
+                    isRTL: isRTL,
+                    fontSize: fontSize
                 )
             }
         }
         .scaleEffect(scale)
-        // Curve offsets are em fractions; 28 is the syllable font size.
-        .offset(y: CGFloat(yOffsetFraction) * 28)
+        // Keep word motion proportional to the responsive lyric size.
+        .offset(y: CGFloat(yOffsetFraction) * fontSize)
         .shadow(color: .white.opacity(glow * 0.8), radius: CGFloat(glow * 8))
         .animation(.linear(duration: 1.0 / 30.0), value: wordProgress)
     }
@@ -86,6 +92,7 @@ private struct KaraokeSyllableTextView: View {
     let currentMs: Int
     let isActiveLine: Bool
     let isRTL: Bool
+    let fontSize: CGFloat
 
     // LinearGradient never mirrors .leading/.trailing for RTL, so pick the physical edges here.
     private var gradientStart: UnitPoint { isRTL ? .trailing : .leading }
@@ -101,14 +108,15 @@ private struct KaraokeSyllableTextView: View {
 
     var body: some View {
         Text(syllable.text)
-            .font(.system(size: 28, weight: .bold))
+            .font(.system(size: fontSize, weight: .bold))
+            .fixedSize(horizontal: false, vertical: true)
             .foregroundStyle(
                 LinearGradient(
                     stops: [
                         .init(color: .white, location: 0),
                         .init(color: .white, location: progress),
-                        .init(color: .white.opacity(0.35), location: progress),
-                        .init(color: .white.opacity(0.35), location: 1),
+                        .init(color: .white.opacity(isActiveLine ? 0.45 : 1), location: progress),
+                        .init(color: .white.opacity(isActiveLine ? 0.45 : 1), location: 1),
                     ],
                     startPoint: gradientStart,
                     endPoint: gradientEnd

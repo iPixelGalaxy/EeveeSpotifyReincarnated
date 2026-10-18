@@ -18,9 +18,16 @@ struct KaraokeLyricsView: View {
                     KaraokeGlassBackground().ignoresSafeArea()
                 } else {
                     KaraokeBackgroundView()
+                        .id(model.trackId)
                 }
+                LinearGradient(
+                    colors: [.black.opacity(0.40), .black.opacity(0.32), .black.opacity(0.55)],
+                    startPoint: .top, endPoint: .bottom
+                )
+                .ignoresSafeArea()
+                .allowsHitTesting(false)
                 if let lyrics = model.lyrics {
-                    content(lyrics: lyrics, layouts: model.layouts, screenWidth: geo.size.width)
+                    content(lyrics: lyrics, layouts: model.layouts, size: geo.size)
                         // A new song starts from its own scroll position and state.
                         .id(model.trackId)
                 }
@@ -30,7 +37,7 @@ struct KaraokeLyricsView: View {
         .preferredColorScheme(.dark)
     }
 
-    private func content(lyrics: KaraokeLyricsDto, layouts: [KaraokeLineLayout], screenWidth: CGFloat) -> some View {
+    private func content(lyrics: KaraokeLyricsDto, layouts: [KaraokeLineLayout], size: CGSize) -> some View {
         TimelineView(.periodic(from: .now, by: 1.0 / 30.0)) { _ in
             let currentMs = KaraokePlaybackTracker.shared.currentPositionMs()
 
@@ -40,7 +47,7 @@ struct KaraokeLyricsView: View {
                 options: options,
                 currentMs: currentMs,
                 activeLineIndex: activeLineIndex(in: lyrics, at: currentMs),
-                screenWidth: screenWidth
+                size: size
             )
         }
     }
@@ -71,7 +78,8 @@ struct KaraokeLyricsView: View {
                 .padding(14)
                 .background(closeButtonBackground)
         }
-        .padding(.top, 50)
+        .accessibilityLabel(Text("Close lyrics"))
+        .padding(.top, 12)
         .padding(.trailing, 20)
     }
 }
@@ -83,9 +91,15 @@ private struct KaraokeScrollingLines: View {
     let options: KaraokeOptions
     let currentMs: Int
     let activeLineIndex: Int?
-    let screenWidth: CGFloat
+    let size: CGSize
 
-    private let horizontalPadding: CGFloat = 24
+    @State private var isBrowsing = false
+    @State private var isDragging = false
+    @State private var resumeAt = Date.distantPast
+
+    private var horizontalPadding: CGFloat { max(20, size.width * 0.05) }
+    private var fontSize: CGFloat { min(56, max(29.6, size.width * 0.07)) }
+    private var focus: UnitPoint { UnitPoint(x: 0.5, y: options.reversedDirection ? 0.75 : 0.25) }
 
     var body: some View {
         let alignment = options.textAlignment.horizontalAlignment
@@ -93,16 +107,20 @@ private struct KaraokeScrollingLines: View {
 
         ScrollViewReader { proxy in
             ScrollView(showsIndicators: false) {
-                VStack(alignment: alignment, spacing: 28) {
-                    Spacer().frame(height: 80)
+                VStack(alignment: alignment, spacing: fontSize * 0.4) {
+                    Color.clear.frame(height: size.height * 0.25)
 
                     ForEach(Array(layouts.enumerated()), id: \.offset) { index, layout in
                         KaraokeLineView(
                             layout: layout,
                             currentMs: currentMs,
                             isActiveLine: index == activeLineIndex,
-                            availableWidth: max(0, screenWidth - horizontalPadding * 2),
-                            alignment: alignment
+                            availableWidth: max(0, size.width - horizontalPadding * 2),
+                            alignment: alignment,
+                            fontSize: fontSize,
+                            distance: index - (activeLineIndex ?? 0),
+                            isBrowsing: isBrowsing,
+                            blurIntensity: options.blurIntensity
                         )
                         .id(index)
                         .padding(.horizontal, horizontalPadding)
@@ -112,19 +130,45 @@ private struct KaraokeScrollingLines: View {
                     KaraokeCreditsFooterView(lyrics: lyrics)
                         .scaleEffect(x: 1, y: flip)
 
-                    Spacer().frame(height: 200)
+                    Color.clear.frame(height: size.height * 0.75)
                 }
                 .frame(maxWidth: .infinity)
             }
+            .mask(
+                LinearGradient(stops: [
+                    .init(color: .clear, location: 0),
+                    .init(color: .black, location: 0.08),
+                    .init(color: .black, location: 0.88),
+                    .init(color: .clear, location: 1)
+                ], startPoint: .top, endPoint: .bottom)
+            )
+            .simultaneousGesture(DragGesture(minimumDistance: 8)
+                .onChanged { _ in
+                    isDragging = true
+                    isBrowsing = true
+                }
+                .onEnded { _ in
+                    isDragging = false
+                    resumeAt = Date().addingTimeInterval(5)
+                }
+            )
             .onAppear {
                 guard let activeLineIndex = activeLineIndex, activeLineIndex < lyrics.lines.count else { return }
-                proxy.scrollTo(activeLineIndex, anchor: .center)
+                proxy.scrollTo(activeLineIndex, anchor: focus)
             }
             .onChange(of: activeLineIndex) { newIndex in
-                guard let newIndex = newIndex, newIndex < lyrics.lines.count else { return }
-                // Single-curve stand-in for SpicyLyrics' overshoot scroll.
-                withAnimation(.timingCurve(0.3, 1.4, 0.7, 1.0, duration: 0.8)) {
-                    proxy.scrollTo(newIndex, anchor: .center)
+                guard !isBrowsing, let newIndex = newIndex, newIndex < lyrics.lines.count else { return }
+                withAnimation(.timingCurve(0.4, 0, 0, 1, duration: 0.65)) {
+                    proxy.scrollTo(newIndex, anchor: focus)
+                }
+            }
+            .onChange(of: currentMs) { _ in
+                guard isBrowsing, !isDragging, Date() >= resumeAt else { return }
+                isBrowsing = false
+                if let activeLineIndex = activeLineIndex {
+                    withAnimation(.timingCurve(0.4, 0, 0, 1, duration: 0.65)) {
+                        proxy.scrollTo(activeLineIndex, anchor: focus)
+                    }
                 }
             }
             // Flip the list and counter-flip rows; y-only so leading/trailing alignment isn't mirrored.
