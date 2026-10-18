@@ -61,6 +61,8 @@ struct KaraokeLyricsView: View {
                 .position(x: frame.midX, y: frame.midY)
             }
         }
+        // UIKit already supplies a viewport in the Canvas view's coordinates.
+        .ignoresSafeArea()
         .preferredColorScheme(.dark)
         .onReceive(NotificationCenter.default.publisher(for: .eeveeKaraokeOptionsChanged)) { _ in
             let updated = UserDefaults.karaokeOptions
@@ -128,6 +130,8 @@ private struct KaraokeScrollingLines: View {
     @State private var isBrowsing = false
     @State private var isDragging = false
     @State private var resumeAt = Date.distantPast
+    @State private var creditsAtBottom = false
+    @State private var creditsTopPadding: CGFloat = 0
 
     private var horizontalPadding: CGFloat { max(20, size.width * 0.05) }
     private var fontSize: CGFloat { min(36, max(28, size.width * 0.075)) }
@@ -176,18 +180,36 @@ private struct KaraokeScrollingLines: View {
                     }
 
                     KaraokeCreditsFooterView(lyrics: lyrics)
+                        .padding(.top, creditsTopPadding)
+                        .background(GeometryReader { geometry in
+                            Color.clear.preference(key: KaraokeCreditsBottomKey.self,
+                                value: geometry.frame(in: .named("KaraokeLyricsScroll")).maxY)
+                                .preference(key: KaraokeContentBottomKey.self,
+                                    value: geometry.frame(in: .named("KaraokeLyricsContent")).maxY)
+                        })
                         .scaleEffect(x: 1, y: flip)
 
-                    Color.clear.frame(height: size.height * 0.75)
                 }
                 .frame(maxWidth: .infinity)
+                .background(KaraokeScrollLimits())
+                .coordinateSpace(name: "KaraokeLyricsContent")
+            }
+            .coordinateSpace(name: "KaraokeLyricsScroll")
+            .onPreferenceChange(KaraokeCreditsBottomKey.self) { bottom in
+                creditsAtBottom = bottom.isFinite && bottom <= size.height + 1
+            }
+            .onPreferenceChange(KaraokeContentBottomKey.self) { bottom in
+                guard bottom.isFinite else { return }
+                // For short songs, fill above credits rather than leaving empty space below them.
+                let padding = max(0, size.height - (bottom - creditsTopPadding))
+                if abs(padding - creditsTopPadding) > 0.5 { creditsTopPadding = padding }
             }
             .mask(
                 LinearGradient(stops: [
                     .init(color: .clear, location: 0),
                     .init(color: .black, location: 0.08),
                     .init(color: .black, location: 0.88),
-                    .init(color: .clear, location: 1)
+                    .init(color: creditsAtBottom ? .black : .clear, location: 1)
                 ], startPoint: .top, endPoint: .bottom)
             )
             .simultaneousGesture(DragGesture(minimumDistance: 8)
@@ -223,5 +245,45 @@ private struct KaraokeScrollingLines: View {
             .scaleEffect(x: 1, y: flip)
         }
         .environment(\.layoutDirection, lyrics.isRTL ? .rightToLeft : .leftToRight)
+    }
+}
+
+
+private struct KaraokeCreditsBottomKey: PreferenceKey {
+    static var defaultValue: CGFloat = .infinity
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
+}
+
+private struct KaraokeContentBottomKey: PreferenceKey {
+    static var defaultValue: CGFloat = .infinity
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
+}
+
+/// Scope bounce changes to this lyrics scroll view, never to Spotify's global scroll appearance.
+private struct KaraokeScrollLimits: UIViewRepresentable {
+    func makeUIView(context: Context) -> Probe { Probe() }
+    func updateUIView(_ view: Probe, context: Context) { view.configure() }
+
+    final class Probe: UIView {
+        override init(frame: CGRect) {
+            super.init(frame: frame)
+            isUserInteractionEnabled = false
+            accessibilityElementsHidden = true
+        }
+        required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+        override func didMoveToWindow() { super.didMoveToWindow(); configure() }
+        override func layoutSubviews() { super.layoutSubviews(); configure() }
+
+        func configure() {
+            var ancestor = superview
+            while let view = ancestor {
+                if let scroll = view as? UIScrollView {
+                    scroll.bounces = false
+                    scroll.alwaysBounceVertical = false
+                    return
+                }
+                ancestor = view.superview
+            }
+        }
     }
 }

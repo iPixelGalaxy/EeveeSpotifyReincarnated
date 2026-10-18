@@ -140,6 +140,7 @@ final class KaraokeOverlayPresenter {
         viewport.frame = frame
         let child = UIHostingController(rootView: KaraokeLyricsView(trackId: trackId,
             lyrics: KaraokeLyricsStore.shared.lyrics(forTrackId: trackId), viewport: viewport, onDismiss: dismiss))
+        if #available(iOS 16.4, *) { child.safeAreaRegions = [] }
         child.overrideUserInterfaceStyle = .dark
         child.view.backgroundColor = .clear
         let plane = KaraokeCanvasContainer(frame: canvas.bounds)
