@@ -23,8 +23,8 @@ struct KaraokeBackgroundView: View {
     private static let metalRendererSupported = KaraokeBackgroundRenderer.shared != nil
 
     var body: some View {
-        Group {
-            if let image = albumArtImage, Self.metalRendererSupported {
+        ZStack {
+            if albumArtImage != nil, Self.metalRendererSupported {
                 KaraokeMetalBackgroundView().ignoresSafeArea().transition(.opacity)
             } else if let image = albumArtImage {
                 TimelineView(.periodic(from: .now, by: 1.0 / 24.0)) { timeline in
@@ -55,7 +55,11 @@ struct KaraokeBackgroundView: View {
         .allowsHitTesting(false)
         .onAppear { restart() }
         .onChange(of: trackId) { _ in restart() }
-        .onDisappear { refreshWork?.cancel(); refreshWork = nil; generation = UUID() }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in restart() }
+        .onDisappear {
+            refreshWork?.cancel(); refreshWork = nil; generation = UUID()
+            writeDebugLog("[Karaoke][background] stopped refresh for track=\(trackId ?? "nil")")
+        }
     }
 
     private func restart() {
@@ -67,9 +71,19 @@ struct KaraokeBackgroundView: View {
 
     private func refresh(token: UUID, attempt: Int) {
         guard token == generation else { return }
+        // Metadata can briefly lag playback. Keep polling until this view actually disappears.
+        defer {
+            if token == generation {
+                let work = DispatchWorkItem { refresh(token: token, attempt: attempt + 1) }
+                refreshWork = work
+                DispatchQueue.main.asyncAfter(deadline: .now() + (attempt < 10 ? 0.3 : 1), execute: work)
+            }
+        }
         let playing = KaraokePlaybackTracker.shared.playerReportedTrackId() ?? KaraokePlaybackTracker.shared.currentTrackId()
         guard playing == trackId else {
-            refreshWork = nil
+            if attempt == 0 || attempt == 10 {
+                writeDebugLog("[Karaoke][background] waiting for matching playback metadata")
+            }
             return
         }
         if let image = AlbumArtLocator.currentAlbumArt(forTrackId: trackId),
@@ -93,9 +107,9 @@ struct KaraokeBackgroundView: View {
                 }
             }
         }
-        let work = DispatchWorkItem { refresh(token: token, attempt: attempt + 1) }
-        refreshWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + (attempt < 10 ? 0.3 : 2), execute: work)
+        if albumArtImage == nil, attempt == 0 || attempt == 10 || attempt % 30 == 0 {
+            writeDebugLog("[Karaoke][background] artwork not ready; refresh remains active attempt=\(attempt)")
+        }
     }
 
     private static func signature(_ image: UIImage) -> Data? {

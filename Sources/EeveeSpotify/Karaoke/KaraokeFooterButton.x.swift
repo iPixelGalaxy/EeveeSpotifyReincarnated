@@ -169,6 +169,11 @@ class KaraokeControlsUnitHook: ClassHook<UIViewController> {
         orig.viewDidLayoutSubviews()
         if let view = target.viewIfLoaded { KaraokeOverlayPresenter.registerControls(view) }
     }
+    func viewDidAppear(_ animated: Bool) {
+        orig.viewDidAppear(animated)
+        if let view = target.viewIfLoaded { KaraokeOverlayPresenter.registerControls(view) }
+    }
+
 }
 
 class KaraokeDurationUnitHook: ClassHook<UIViewController> {
@@ -178,6 +183,11 @@ class KaraokeDurationUnitHook: ClassHook<UIViewController> {
         orig.viewDidLayoutSubviews()
         if let view = target.viewIfLoaded { KaraokeOverlayPresenter.registerDuration(view) }
     }
+    func viewDidAppear(_ animated: Bool) {
+        orig.viewDidAppear(animated)
+        if let view = target.viewIfLoaded { KaraokeOverlayPresenter.registerDuration(view) }
+    }
+
 }
 
 /// The stock lyrics header is a separate unit from the normal playback footer.

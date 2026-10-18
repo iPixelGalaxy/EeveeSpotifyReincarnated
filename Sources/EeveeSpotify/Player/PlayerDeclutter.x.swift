@@ -48,7 +48,7 @@ enum PlayerPart: String, CaseIterable, Codable {
 }
 
 enum PlayerDeclutter {
-    private static let configuredHidden = Set(UserDefaults.playerOptions.hiddenParts)
+    private static var configuredHidden = Set(UserDefaults.playerOptions.hiddenParts)
     private static var lyricsOverride = false
     static var isLyricsOverrideActive: Bool { lyricsOverride }
     static var hidden: Set<PlayerPart> {
@@ -66,6 +66,8 @@ enum PlayerDeclutter {
 
     static func setLyricsOverride(_ enabled: Bool, in root: UIView?) {
         guard lyricsOverride != enabled else { return }
+        releaseScrollLocks()
+        configuredHidden = Set(UserDefaults.playerOptions.hiddenParts)
         lyricsOverride = enabled
         if !enabled {
             for saved in forcedViews.values {
@@ -82,11 +84,26 @@ enum PlayerDeclutter {
             queue.append(contentsOf: view.subviews)
         }
         for collection in cardCollections.allObjects {
+            // Reload only cards hidden by the override; preserve the main player and its artwork.
+            let collapsed = collection.visibleCells.compactMap { cell -> (UICollectionViewCell, IndexPath)? in
+                guard !enabled, objc_getAssociatedObject(cell, &interactionKey) != nil,
+                      let index = collection.indexPath(for: cell) else { return nil }
+                return (cell, index)
+            }
             for cell in collection.visibleCells { resetCard(cell) }
             collection.collectionViewLayout.invalidateLayout()
             collection.setNeedsLayout()
+            if !collapsed.isEmpty {
+                DispatchQueue.main.async { [weak collection] in
+                    guard !lyricsOverride, let collection else { return }
+                    let indices = collapsed.compactMap { cell, index -> IndexPath? in
+                        collection.cellForItem(at: index) === cell ? index : nil
+                    }
+                    if !indices.isEmpty { UIView.performWithoutAnimation { collection.reloadItems(at: indices) } }
+                }
+            }
         }
-        if let root { trimEmptyTail(in: root); root.setNeedsLayout() }
+        root?.setNeedsLayout()
         PlayerAssistantVisibility.refresh()
         writeDebugLog("[Karaoke][declutter] temporary All Cards and Lyrics Preview=\(enabled)")
     }
@@ -208,7 +225,8 @@ enum PlayerDeclutter {
         let alpha: CGFloat
         let enabled: Bool
         let accessibilityHidden: Bool
-        init(_ cell: UIView) { alpha = cell.alpha; enabled = cell.isUserInteractionEnabled; accessibilityHidden = cell.accessibilityElementsHidden }
+        let clips: Bool
+        init(_ cell: UIView) { alpha = cell.alpha; enabled = cell.isUserInteractionEnabled; accessibilityHidden = cell.accessibilityElementsHidden; clips = cell.clipsToBounds }
     }
     static func updateCardInteraction(_ cell: UIView, hidden: Bool) {
         if hidden {
@@ -222,6 +240,7 @@ enum PlayerDeclutter {
             cell.alpha = saved.alpha
             cell.isUserInteractionEnabled = saved.enabled
             cell.accessibilityElementsHidden = saved.accessibilityHidden
+            cell.clipsToBounds = saved.clips
             objc_setAssociatedObject(cell, &interactionKey, nil, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
         }
     }
@@ -292,15 +311,21 @@ enum PlayerDeclutter {
     }
 
     /// Once collapsed cards leave no vertical overflow, prevent elastic/stale empty space.
-    static func trimEmptyTail(in root: UIView) {
-        guard hidden.contains(.allCards) || [.talkAboutSong, .aboutSong, .artistCircles].allSatisfy(hidden.contains) else {
-            for scroll in trimmedScrolls.allObjects {
-                objc_setAssociatedObject(scroll, &scrollOffsetKey, nil, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
-                if let saved = objc_getAssociatedObject(scroll, &bounceKey) as? [Bool], saved.count == 3 {
-                    scroll.bounces = saved[0]; scroll.alwaysBounceVertical = saved[1]; scroll.isScrollEnabled = saved[2]
-                    objc_setAssociatedObject(scroll, &bounceKey, nil, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
-                }
+    private static func releaseScrollLocks() {
+        for scroll in trimmedScrolls.allObjects {
+            objc_setAssociatedObject(scroll, &scrollOffsetKey, nil, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+            if let saved = objc_getAssociatedObject(scroll, &bounceKey) as? [Bool], saved.count == 3 {
+                scroll.bounces = saved[0]; scroll.alwaysBounceVertical = saved[1]; scroll.isScrollEnabled = saved[2]
+                objc_setAssociatedObject(scroll, &bounceKey, nil, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
             }
+        }
+        trimmedScrolls.removeAllObjects()
+    }
+    static func trimEmptyTail(in root: UIView) {
+        // The lyrics presenter owns its scroll lock; never capture its disabled state as a native default.
+        guard !lyricsOverride else { return }
+        guard hidden.contains(.allCards) || [.talkAboutSong, .aboutSong, .artistCircles].allSatisfy(hidden.contains) else {
+            releaseScrollLocks()
             return
         }
         let collapsed = cardsAreCollapsed(in: root)
@@ -314,6 +339,10 @@ enum PlayerDeclutter {
                   scroll.bounds.height >= window.bounds.height * 0.5,
                   scroll.contentSize.width <= scroll.bounds.width + 1 else { continue }
             let empty = collapsed || scroll.contentSize.height <= scroll.bounds.height + 1
+            if !collapsed {
+                objc_setAssociatedObject(scroll, &scrollOffsetKey, nil, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+                if let saved = objc_getAssociatedObject(scroll, &bounceKey) as? [Bool], saved.count == 3 { scroll.isScrollEnabled = saved[2] }
+            }
             if empty {
                 if objc_getAssociatedObject(scroll, &bounceKey) == nil {
                     trimmedScrolls.add(scroll)
@@ -422,9 +451,10 @@ class PlayerCardCellHook: ClassHook<UICollectionViewCell> {
         let part = PlayerDeclutter.cardsMeter.measure { PlayerDeclutter.hiddenCard(for: target) }
         PlayerDeclutter.updateCardInteraction(target, hidden: part != nil)
         guard part != nil else { return result }
-        result.size = CGSize(width: result.size.width, height: 0)
+        let collapsed = result.copy() as! UICollectionViewLayoutAttributes
+        collapsed.size = CGSize(width: result.size.width, height: 0)
         target.clipsToBounds = true
-        return result
+        return collapsed
     }
 }
 
@@ -638,11 +668,11 @@ class PlayerCollapsedScrollHook: ClassHook<UIScrollView> {
     typealias Group = PlayerCardsDeclutterGroup
     @objc(setContentOffset:)
     func setContentOffset(_ offset: CGPoint) {
-        orig.setContentOffset(PlayerDeclutter.constrainedOffset(offset, in: target))
+        orig.setContentOffset(KaraokeOverlayPresenter.constrainedPlayerOffset(PlayerDeclutter.constrainedOffset(offset, in: target), in: target))
     }
     @objc(setContentOffset:animated:)
     func setContentOffset(_ offset: CGPoint, animated: Bool) {
-        orig.setContentOffset(PlayerDeclutter.constrainedOffset(offset, in: target), animated: animated)
+        orig.setContentOffset(KaraokeOverlayPresenter.constrainedPlayerOffset(PlayerDeclutter.constrainedOffset(offset, in: target), in: target), animated: animated)
     }
 }
 

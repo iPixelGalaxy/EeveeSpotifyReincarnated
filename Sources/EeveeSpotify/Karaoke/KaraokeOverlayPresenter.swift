@@ -25,6 +25,7 @@ final class KaraokeOverlayPresenter {
         if isPresented && isEnabled && !focused { interact() }
     }
     private static var focused = false
+    private static var waitingForNativeUnits = false
     private static var suspended = false
     private static var preparingAppearance = false
     private static var mounting = false
@@ -150,9 +151,10 @@ final class KaraokeOverlayPresenter {
     }
 
     static func registerControls(_ view: UIView) {
-        if isPresented, !preparingAppearance, view.window == nil { return }
-        if let window = view.window, let frame = unitFrame(view, in: window), !frame.intersects(window.bounds) { return }
         if focused, nativeStates[ObjectIdentifier(view)]?.view !== view { nativeStates[ObjectIdentifier(view)] = NativeState(view) }
+        if controls !== view {
+            writeDebugLog("[Karaoke][units] bound playback controls window=\(view.window != nil) frame=\(view.frame)")
+        }
         controls = view
         if isPresented {
             view.alpha = 1; view.isUserInteractionEnabled = true
@@ -160,7 +162,6 @@ final class KaraokeOverlayPresenter {
         }
     }
     static func registerDuration(_ view: UIView) {
-        if isPresented, !preparingAppearance, view.window == nil { return }
         if focused, nativeStates[ObjectIdentifier(view)]?.view !== view { nativeStates[ObjectIdentifier(view)] = NativeState(view) }
         duration = view
         if isPresented { updateFrame() }
@@ -261,10 +262,30 @@ final class KaraokeOverlayPresenter {
         }
     }
 
+    static func constrainedPlayerOffset(_ proposed: CGPoint, in scroll: UIScrollView) -> CGPoint {
+        guard isPresented, outerScrolls[ObjectIdentifier(scroll)]?.view === scroll else { return proposed }
+        return CGPoint(x: proposed.x, y: -scroll.adjustedContentInset.top)
+    }
+
+    private static func recoverNativeUnits(in controller: UIViewController) {
+        guard let root = controller.viewIfLoaded else { return }
+        var pending = controller.children
+        while let child = pending.popLast() {
+            pending.append(contentsOf: child.children)
+            guard let view = child.viewIfLoaded, view.isDescendant(of: root) else { continue }
+            let name = NSStringFromClass(type(of: child))
+            if name.contains("PlaybackControlsElementsUnit") { registerControls(view) }
+            else if name.contains("DurationElementUnit") { registerDuration(view) }
+            else if name.contains("InformationElementsUnit") { registerInformation(view) }
+        }
+    }
+
     static func layoutPlayer(_ controller: UIViewController) {
         guard let root = controller.viewIfLoaded else { return }
         playerRoot = root
         guard isPresented else { return }
+        if controls?.window == nil || duration?.window == nil { recoverNativeUnits(in: controller) }
+        if focused, controls?.window == nil || duration?.window == nil { interact() }
         if nativeMonitor?.view !== root {
             nativeMonitor?.view?.removeGestureRecognizer(nativeMonitor!)
             let monitor = KaraokeControlTouchMonitor()
@@ -283,6 +304,11 @@ final class KaraokeOverlayPresenter {
                 if logged.count < 40, ["Lyrics", "NowPlaying_", "Martini", "Recommend", "Share", "Fullscreen"].contains(where: name.contains), logged.insert(name).inserted {
                     writeDebugLog("[Karaoke][hierarchy] \(name) id=\(view.accessibilityIdentifier ?? "-") frame=\(view.convert(view.bounds, to: root)) alpha=\(view.alpha)")
                 }
+            }
+            if let unit = view.next as? UIViewController {
+                let name = NSStringFromClass(type(of: unit))
+                if name.contains("PlaybackControlsElementsUnit"), controls !== view { registerControls(view) }
+                else if name.contains("DurationElementUnit"), duration !== view { registerDuration(view) }
             }
             suppressVideoSwitch(view)
             PlayerDeclutter.hideLatePlayerElement(view)
@@ -368,6 +394,23 @@ final class KaraokeOverlayPresenter {
 
     private static func setFocused(_ value: Bool) {
         guard focused != value else { return }
+        if value {
+            if let controller = playerRoot?.next as? UIViewController { recoverNativeUnits(in: controller) }
+            guard let window = canvas?.window, let controls, let duration, let information,
+                  controls.window === window, duration.window === window, information.window === window,
+                  let controlsFrame = unitFrame(controls, in: window), !controlsFrame.isEmpty,
+                  let durationFrame = unitFrame(duration, in: window), !durationFrame.isEmpty else {
+                if !waitingForNativeUnits { writeDebugLog("[Karaoke][focus] waiting for complete playback units; keeping normal layout") }
+                waitingForNativeUnits = true
+                let retry = DispatchWorkItem {
+                    if isPresented && !suspended && !nativeTouchActive && !UIAccessibility.isVoiceOverRunning { setFocused(true) }
+                }
+                idleWork?.cancel(); idleWork = retry
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: retry)
+                return
+            }
+        }
+        waitingForNativeUnits = false
         focusHeartbeat?.cancel()
         focusHeartbeat = nil
         releaseCompactVisibility()
@@ -420,7 +463,6 @@ final class KaraokeOverlayPresenter {
     static let coverClass = "_TtC35NowPlaying_ContentLayerPlatformImpl24AccessibleCollectionView"
 
     static func registerPlayer(_ root: UIView) {
-        if isPresented, !preparingAppearance, root.window == nil { return }
         if focused, nativeStates[ObjectIdentifier(root)]?.view !== root { nativeStates[ObjectIdentifier(root)] = NativeState(root) }
         footer = root
         if isPresented {
@@ -443,7 +485,6 @@ final class KaraokeOverlayPresenter {
     }
 
     static func registerInformation(_ root: UIView) {
-        if isPresented, !preparingAppearance, root.window == nil { return }
         if focused, nativeStates[ObjectIdentifier(root)]?.view !== root { nativeStates[ObjectIdentifier(root)] = NativeState(root) }
         information = root
         if isPresented { updateFrame() } else { restoreIfNeeded() }
