@@ -23,3 +23,16 @@ class SpotifyControllerRotationHook: ClassHook<UIViewController> {
         orig.viewWillAppear(animated)
     }
 }
+
+class NativeControlWindowHitHook: ClassHook<UIWindow> {
+    typealias Group = KaraokeGlobalRotationGroup
+    @objc(hitTest:withEvent:) func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        let native = orig.hitTest(point, with: event)
+        if let hit = KaraokeOverlayPresenter.routedControlHit(at: point, in: target, event: event) { return hit }
+        if #available(iOS 26.0, *) {
+            if let hit = LandscapeNavigation.nativeHit(at: point, in: target, event: event) { return hit }
+            if let hit = LandscapePlaylistHeader.nativeHit(at: point, in: target, event: event) { return hit }
+        }
+        return native
+    }
+}

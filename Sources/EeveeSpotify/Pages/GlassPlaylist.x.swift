@@ -56,7 +56,7 @@ enum GlassPlaylist {
             let artwork = header.eeveeFirst(UIView.self, where: { $0.accessibilityIdentifier == "Components.Header.UI.ArtworkImage" })
             let coverView = artwork?.eeveeFirst(UIImageView.self, where: { $0.bounds.width > 100 })
             let existingHero = objc_getAssociatedObject(container, &heroKey) as? HeroCover
-            let hero: HeroCover? = !options.fullCover ? nil : existingHero ?? {
+            let hero: HeroCover? = !options.fullCover || LandscapePlaylistHeader.isLandscape(root) ? nil : existingHero ?? {
                 let hero = HeroCover()
                 objc_setAssociatedObject(container, &heroKey, hero, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
                 return hero
@@ -421,7 +421,7 @@ class PlaylistArtworkHook: ClassHook<UIView> {
     static let targetName = "_TtC19LegacyUI_ECMCoreKit15ShadowContainer"
 
     func setAlpha(_ alpha: CGFloat) {
-        guard #available(iOS 26.0, *), GlassPlaylist.options.fullCover,
+        guard #available(iOS 26.0, *), GlassPlaylist.options.fullCover, !LandscapePlaylistHeader.isLandscape(target),
               target.accessibilityIdentifier == "Components.Header.UI.ArtworkImage", PlaylistHeader.contains(target) else {
             orig.setAlpha(alpha)
             return
@@ -435,10 +435,20 @@ class PlaylistHeaderLayoutHook: ClassHook<UIView> {
     typealias Group = GlassPlaylistGroup
     static let targetName = "_TtC28EncoreConsumerMobile_BaseKit19HeaderContentLayout"
 
+    func sizeThatFits(_ size: CGSize) -> CGSize {
+        let result = orig.sizeThatFits(size)
+        if #available(iOS 26.0, *), PlaylistHeader.contains(target), let height = LandscapePlaylistHeader.height(in: target) {
+            return CGSize(width: result.width > 0 ? result.width : size.width, height: height)
+        }
+        return result
+    }
+
     func layoutSubviews() {
+        if #available(iOS 26.0, *) { LandscapePlaylistHeader.prepare(target) }
         orig.layoutSubviews()
         guard #available(iOS 26.0, *), PlaylistHeader.contains(target) else { return }
-        GlassPlaylist.centerTitleBlock(in: target)
+        if LandscapePlaylistHeader.isLandscape(target) { LandscapePlaylistHeader.layout(target) }
+        else { GlassPlaylist.centerTitleBlock(in: target) }
     }
 }
 

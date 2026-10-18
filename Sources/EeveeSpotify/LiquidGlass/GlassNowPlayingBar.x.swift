@@ -60,6 +60,7 @@ enum GlassNowPlayingBar {
                   NSStringFromClass(type(of: found)), NSCoder.string(for: found.frame), intercepted ? "intercepted" : "FAILED")
         }
         guard let card else { return }
+        LandscapeNavigation.layoutPlayer(in: host, card: card)
         if artwork?.isDescendant(of: card) != true { artwork = findArtwork(in: card) }
         let frame = card.convert(card.bounds, to: host)
         let now = Styled(frame: frame, artwork: artwork?.bounds.size, options: options)

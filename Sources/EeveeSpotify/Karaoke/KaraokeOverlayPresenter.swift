@@ -148,13 +148,22 @@ final class KaraokeOverlayPresenter {
         if close { collapsePlayer() } else { interact() }
     }
 
+    static func routedControlHit(at point: CGPoint, in window: UIWindow, event: UIEvent?) -> UIView? {
+        guard isPresented, focused || isLandscape, canvas?.window === window else { return nil }
+        if isLandscape, let hit = landscapeSidebar?.nativeHit(at: point, in: window, event: event) { return hit }
+        for root in [controls, duration, information, header, footer].compactMap({ $0 }) {
+            if let hit = NativeHitRouter.hit(root, at: point, in: window, event: event) { return hit }
+        }
+        return nil
+    }
+
     static func nativeTouchBegan(_ touch: UITouch) -> Bool {
         guard isPresented else { return false }
         if let touched = touch.view, let hosted = hosting?.view, touched.isDescendant(of: hosted) { return false }
         nativeTouchActive = true
         compactTouch = focused && touch.view.map { touched in controls.map { touched.isDescendant(of: $0) } ?? false } == true
         idleWork?.cancel()
-        writeDebugLog("[Karaoke][touch] native control began; pause idle timer")
+        writeDebugLog("[Karaoke][touch] native began hit=\(touch.view.map { NSStringFromClass(type(of: $0)) } ?? "nil") compact=\(compactTouch)")
         return true
     }
     static func nativeTouchEnded() {

@@ -146,6 +146,13 @@ final class KaraokeLandscapeSidebar: UIScrollView {
         setNeedsLayout()
     }
 
+    func nativeHit(at point: CGPoint, in window: UIWindow, event: UIEvent?) -> UIView? {
+        for unit in [Unit.controls, .duration, .information] {
+            if let view = placements[unit]?.view, let hit = NativeHitRouter.hit(view, at: point, in: window, event: event) { return hit }
+        }
+        return nil
+    }
+
     override func layoutSubviews() {
         super.layoutSubviews()
         let rows = Unit.allCases.compactMap { placements[$0] }

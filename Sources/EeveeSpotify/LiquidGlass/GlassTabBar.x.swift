@@ -137,6 +137,7 @@ enum GlassTabBar {
 
         let frame = barFrame(in: stock)
         if bar.frame != frame { bar.frame = frame }
+        LandscapeNavigation.didLayoutBar(bar, in: stock)
         if stock.subviews.last !== bar { stock.bringSubviewToFront(bar) }
     }
 
@@ -222,9 +223,10 @@ enum GlassTabBar {
 
     private static func barFrame(in stock: UIView) -> CGRect {
         let bounds = stock.bounds
-        guard bounds.height > 0, bounds.height < minimumBarHeight else { return bounds }
-        return CGRect(x: bounds.minX, y: bounds.midY - minimumBarHeight / 2,
-                      width: bounds.width, height: minimumBarHeight)
+        let native = bounds.height > 0 && bounds.height < minimumBarHeight
+            ? CGRect(x: bounds.minX, y: bounds.midY - minimumBarHeight / 2, width: bounds.width, height: minimumBarHeight)
+            : bounds
+        return LandscapeNavigation.barFrame(in: stock, fallback: native)
     }
 
     private static func systemBar(on stock: UIView) -> GlassSystemTabBar {
