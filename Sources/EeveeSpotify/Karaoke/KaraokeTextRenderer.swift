@@ -7,8 +7,8 @@ final class KaraokeTextPlan {
     struct Segment {
         let range: NSRange
         let timing: KaraokeSyllableDto
-        let wordStartMs: Int
-        let wordEndMs: Int
+        let highlightStartMs: Int
+        let highlightEndMs: Int
         var glyphs: [Int] = []
         var bounds = CGRect.null
     }
@@ -67,6 +67,9 @@ final class KaraokeTextPlan {
         let all = words.flatMap { $0 }
         let lineStart = timingRange?.lowerBound ?? all.map(\.startMs).min() ?? 0
         let lineEnd = max(lineStart + 1, timingRange?.upperBound ?? all.map(\.endMs).max() ?? lineStart + 1)
+        let usesLineTiming = !all.isEmpty && all.allSatisfy {
+            $0.startMs == lineStart && $0.endMs <= $0.startMs
+        }
         startMs = lineStart
         endMs = lineEnd
         self.fontSize = fontSize
@@ -77,16 +80,16 @@ final class KaraokeTextPlan {
         for word in words {
             let parts = word.filter { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
             guard !parts.isEmpty else { continue }
-            let wordStart = parts.map(\.startMs).min() ?? lineStart
-            let rawEnd = parts.map(\.endMs).max() ?? wordStart
-            // Instantaneous words from line-only sources share the line's glow envelope.
-            let wordEnd = rawEnd <= wordStart && wordStart == lineStart ? lineEnd : max(wordStart + 1, rawEnd)
             if !text.isEmpty { text += " " }
             for part in parts {
                 let fragment = part.text.trimmingCharacters(in: .whitespacesAndNewlines)
                 let range = NSRange(location: text.utf16.count, length: fragment.utf16.count)
                 text += fragment
-                segments.append(Segment(range: range, timing: part, wordStartMs: wordStart, wordEndMs: wordEnd))
+                // Spicy's Syllable.ts keeps each split's clock inside a word-group.
+                // Only sources without syllable timing share the full line envelope.
+                let start = usesLineTiming ? lineStart : part.startMs
+                let end = usesLineTiming ? lineEnd : max(start + 1, part.endMs)
+                segments.append(Segment(range: range, timing: part, highlightStartMs: start, highlightEndMs: end))
             }
         }
         self.text = text
@@ -374,8 +377,8 @@ final class KaraokeTextCanvas: UIView {
         if !renderingMotion { CTFrameDraw(plan.frame, context); context.restoreGState(); return }
         for glyph in plan.glyphs {
             let part = plan.segments[glyph.segment]
-            let progress = min(1, max(0, Double(currentMs - part.wordStartMs) / Double(max(1, part.wordEndMs - part.wordStartMs))))
-            let glow = currentMs < part.wordStartMs ? 0 : (currentMs <= part.wordEndMs ? progress : max(0, 1 - Double(currentMs - part.wordEndMs) / 350))
+            let progress = min(1, max(0, Double(currentMs - part.highlightStartMs) / Double(max(1, part.highlightEndMs - part.highlightStartMs))))
+            let glow = currentMs < part.highlightStartMs ? 0 : (currentMs <= part.highlightEndMs ? progress : max(0, 1 - Double(currentMs - part.highlightEndMs) / 350))
             let fill = plan.fillInks[min(64, max(0, Int(progress * 64)))]
             let (matrix, _) = transform(for: glyph, in: plan)
             context.saveGState()
