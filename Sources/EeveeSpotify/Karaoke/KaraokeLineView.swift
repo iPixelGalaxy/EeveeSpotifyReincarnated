@@ -6,12 +6,14 @@ struct KaraokeLineLayout {
     let startMs: Int
     let endMs: Int
     let isInterlude: Bool
+    let isOppositeAligned: Bool
+    let isBackground: Bool
 }
 
 extension KaraokeTextAlignment {
     var horizontalAlignment: HorizontalAlignment {
         switch self {
-        case .leading: return .leading
+        case .automatic, .leading: return .leading
         case .center: return .center
         case .trailing: return .trailing
         }

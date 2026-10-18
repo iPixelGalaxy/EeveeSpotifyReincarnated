@@ -35,7 +35,10 @@ struct EeveeLyricsSettingsView: View {
         .eeveeSettingsStyle()
         .disabled(viewModel.isRequestingMusixmatchToken)
         .animation(.default, value: viewModel.animationValues)
-        .onChange(of: karaokeOptions) { UserDefaults.karaokeOptions = $0 }
+        .onChange(of: karaokeOptions) {
+            UserDefaults.karaokeOptions = $0
+            NotificationCenter.default.post(name: .eeveeKaraokeOptionsChanged, object: nil)
+        }
         .onChange(of: spicyLyricsApiKey) { UserDefaults.spicyLyricsApiKey = $0 }
     }
 

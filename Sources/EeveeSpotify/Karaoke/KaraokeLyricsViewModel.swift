@@ -38,7 +38,8 @@ final class KaraokeLyricsViewModel: ObservableObject {
         layouts = displayLyrics?.lines.map { line in
             let direction = line.strongDirection
             return KaraokeLineLayout(words: line.words, isRTL: direction.map { $0 == .rightToLeft } ?? songIsRTL,
-                                     startMs: line.startMs, endMs: line.endMs, isInterlude: line.isInterlude)
+                                     startMs: line.startMs, endMs: line.endMs, isInterlude: line.isInterlude,
+                                     isOppositeAligned: line.isOppositeAligned, isBackground: line.isBackground)
         } ?? []
     }
 

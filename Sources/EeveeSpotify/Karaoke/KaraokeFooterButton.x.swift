@@ -4,6 +4,7 @@ import UIKit
 struct KaraokeFooterGroup: HookGroup {}
 
 extension Notification.Name {
+    static let eeveeKaraokeOptionsChanged = Notification.Name("EeveeKaraokeOptionsChanged")
     static let eeveeKaraokeLyricsChanged = Notification.Name("EeveeKaraokeLyricsChanged")
 }
 
@@ -23,11 +24,11 @@ enum KaraokeFooterButton {
     static let meter = PerfMeter("Karaoke][FooterButton")
 
     private static let button: UIButton = {
-        var config = UIButton.Configuration.plain()
-        config.image = SpicyLyricsBrand.image()
-        config.baseForegroundColor = UIColor(white: 1, alpha: 0.85)
-        config.contentInsets = .zero
-        let button = UIButton(configuration: config)
+        let button = UIButton(type: .custom)
+        button.setImage(SpicyLyricsBrand.image(), for: .normal)
+        button.tintColor = UIColor(white: 1, alpha: 0.85)
+        button.backgroundColor = .clear
+        button.layer.borderWidth = 0
         button.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
             button.widthAnchor.constraint(equalToConstant: 40),
@@ -47,6 +48,7 @@ enum KaraokeFooterButton {
 
     static func attach(to root: UIView) {
         _ = observer
+        KaraokeOverlayPresenter.registerPlayer(root)
         if row?.isDescendant(of: root) != true {
             row = root.eeveeFirst(UIStackView.self, where: { $0.arrangedSubviews.count >= 2 })
         }
@@ -64,12 +66,9 @@ enum KaraokeFooterButton {
         let enabled = KaraokeOverlayPresenter.isEnabled
         let color = enabled ? UIColor(red: 30 / 255, green: 215 / 255, blue: 96 / 255, alpha: 1)
             : UIColor(white: 1, alpha: 0.85)
-        if var config = button.configuration, config.baseForegroundColor != color {
-            config.baseForegroundColor = color
-            button.configuration = config
-        }
         button.tintColor = color
-        button.isSelected = enabled
+        // Accessibility selection is independent of UIKit's selected-button decoration.
+        button.accessibilityTraits = enabled ? [.button, .selected] : [.button]
         button.accessibilityValue = (enabled ? "karaoke_state_enabled" : "karaoke_state_disabled").localized
         KaraokeOverlayPresenter.restoreIfNeeded()
         let tracker = KaraokePlaybackTracker.shared
@@ -107,5 +106,36 @@ class KaraokeCoverHostHook: ClassHook<UIView> {
         orig.didMoveToWindow()
         KaraokeOverlayPresenter.layout(in: target)
         KaraokeOverlayPresenter.detached(target)
+    }
+}
+
+
+class KaraokeCanvasUnitHook: ClassHook<UIViewController> {
+    typealias Group = KaraokeFooterGroup
+    static let targetName = "_TtC35NowPlaying_ContentLayerPlatformImpl26ContentLayerViewController"
+
+    func viewDidLayoutSubviews() {
+        orig.viewDidLayoutSubviews()
+        if let view = target.viewIfLoaded { KaraokeOverlayPresenter.registerCanvas(view) }
+    }
+}
+
+class KaraokeHeaderUnitHook: ClassHook<UIViewController> {
+    typealias Group = KaraokeFooterGroup
+    static let targetName = "_TtC20NowPlaying_ModesImpl18HeaderElementsUnit"
+
+    func viewDidLayoutSubviews() {
+        orig.viewDidLayoutSubviews()
+        if let view = target.viewIfLoaded { KaraokeOverlayPresenter.registerHeader(view) }
+    }
+}
+
+class KaraokeInformationUnitHook: ClassHook<UIViewController> {
+    typealias Group = KaraokeFooterGroup
+    static let targetName = "_TtC20NowPlaying_ModesImpl23InformationElementsUnit"
+
+    func viewDidLayoutSubviews() {
+        orig.viewDidLayoutSubviews()
+        if let view = target.viewIfLoaded { KaraokeOverlayPresenter.registerInformation(view) }
     }
 }

@@ -1,68 +1,99 @@
 import UIKit
 import SwiftUI
 
-/// Hosts lyrics in the artwork rectangle. Spotify retains its own transport and footer controls.
+/// Replace the Canvas layer; native header, song information, and transport stay above it.
 final class KaraokeOverlayPresenter {
     private static let enabledKey = "eeveeEmbeddedLyricsEnabled"
     private(set) static var isEnabled = UserDefaults.standard.bool(forKey: enabledKey)
     private(set) static var isPresented = false
     private static var restoreScheduled = false
-    private static weak var cover: UIView?
+    private static var retryCount = 0
+    private static weak var canvas: UIView?
+    private static weak var header: UIView?
+    private static weak var information: UIView?
+    private static weak var footer: UIView?
     private static var hosting: UIViewController?
-    private static var previousAccessibilityHidden = false
-    private static weak var artwork: UIView?
+    private static var container: KaraokeCanvasContainer?
+    private static let viewport = KaraokeViewport()
     static let coverClass = "_TtC35NowPlaying_ContentLayerPlatformImpl24AccessibleCollectionView"
 
-    /// The collection includes title/controls; only its visible square artwork is the lyrics slot.
-    private static func artworkSurface(in candidate: UIView) -> UIView? {
-        var queue = candidate.subviews
-        var best: (view: UIView, priority: Int, area: CGFloat)?
-        while !queue.isEmpty {
-            let view = queue.removeFirst()
-            if view === hosting?.view { continue }
-            queue.append(contentsOf: view.subviews)
-            guard !view.isHidden, view.alpha > 0, view.bounds.width > 100, view.bounds.height > 100 else { continue }
-            let ratio = view.bounds.width / view.bounds.height
-            guard ratio > 0.8, ratio < 1.25 else { continue }
-            let tilt = NSStringFromClass(type(of: view)).contains("CoverArtTiltView")
-            guard tilt || (view as? UIImageView)?.image != nil else { continue }
-            let frame = view.convert(view.bounds, to: candidate)
-            let visible = frame.intersection(candidate.bounds)
-            guard !visible.isNull, visible.width > 100, visible.height > 100 else { continue }
-            let priority = tilt ? 2 : 1
-            let area = visible.width * visible.height
-            if priority > (best?.priority ?? 0) || (priority == best?.priority && area > (best?.area ?? 0)) {
-                best = (view, priority, area)
-            }
-        }
-        return best?.view
+    static func registerPlayer(_ root: UIView) {
+        footer = root
+        restoreIfNeeded()
+    }
+
+    static func registerCanvas(_ root: UIView) {
+        guard root.window != nil else { return }
+        if canvas !== root, isPresented { removeHosting() }
+        canvas = root
+        if isPresented { updateFrame() } else { restoreIfNeeded() }
+    }
+
+    static func registerHeader(_ root: UIView) {
+        header = root
+        if isPresented { updateFrame() } else { restoreIfNeeded() }
+    }
+
+    static func registerInformation(_ root: UIView) {
+        information = root
+        if isPresented { updateFrame() } else { restoreIfNeeded() }
     }
 
     static func layout(in candidate: UIView) {
-        guard candidate.window != nil, candidate.bounds.width > 100,
-              candidate.bounds.height > 100, PlayerPlacement.contains(candidate) else { return }
-        guard let window = candidate.window,
-              !candidate.convert(candidate.bounds, to: window).intersection(window.bounds).isEmpty else { return }
-        if candidate !== cover, isPresented { removeHosting() }
-        if !isPresented {
-            cover = candidate
-            restoreIfNeeded()
+        guard candidate.window != nil else { return }
+        if isPresented { updateFrame() } else { restoreIfNeeded() }
+    }
+
+    private static func unitFrame(_ unit: UIView, in canvas: UIView) -> CGRect? {
+        // Unit roots may be fullscreen passthrough views; measure their real arranged content.
+        if let stack = unit.eeveeFirst(UIStackView.self, where: {
+            !$0.isHidden && $0.alpha > 0 && $0.bounds.height > 8 && $0.bounds.height < canvas.bounds.height * 0.45
+        }) {
+            return stack.convert(stack.bounds, to: canvas)
+        }
+        guard unit.bounds.height > 8, unit.bounds.height < canvas.bounds.height * 0.45 else { return nil }
+        return unit.convert(unit.bounds, to: canvas)
+    }
+
+    private static func lyricsFrame(in canvas: UIView) -> CGRect? {
+        guard let window = canvas.window, let information,
+              information.window === window, canvas.bounds.width > 100,
+              let infoFrame = unitFrame(information, in: canvas) else { return nil }
+        let safeTop = window.convert(window.safeAreaLayoutGuide.layoutFrame, to: canvas).minY
+        var contentTop = safeTop
+        if let header, header.window === window, !header.isHidden, header.alpha > 0.01,
+           let headerFrame = unitFrame(header, in: canvas) { contentTop = max(contentTop, headerFrame.maxY) }
+        let top = max(canvas.bounds.minY, contentTop + 8)
+        let bottom = min(canvas.bounds.maxY, infoFrame.minY - 8)
+        guard bottom - top > 100 else { return nil }
+        return CGRect(x: 0, y: top - canvas.bounds.minY, width: canvas.bounds.width, height: bottom - top)
+    }
+
+    private static func updateFrame() {
+        guard let canvas, let container, let hosting else { return }
+        guard canvas.window != nil, let frame = lyricsFrame(in: canvas) else {
+            container.isHidden = true
             return
         }
-        guard candidate === cover, let hosting else { return }
-        guard let surface = artworkSurface(in: candidate) else {
-            hosting.view.isHidden = true
-            return
+        container.isHidden = false
+        if container.frame != canvas.bounds { container.frame = canvas.bounds }
+        if hosting.view.frame != container.bounds { hosting.view.frame = container.bounds }
+        container.activeRect = frame
+        if viewport.frame != frame { viewport.frame = frame }
+        // Some player versions nest the foreground units inside the Canvas controller.
+        for unit in [header, information, footer].compactMap({ $0 }) {
+            var branch = unit
+            while let parent = branch.superview, parent !== canvas { branch = parent }
+            if branch.superview === canvas, branch !== container,
+               let planeIndex = canvas.subviews.firstIndex(of: container),
+               let unitIndex = canvas.subviews.firstIndex(of: branch), planeIndex > unitIndex {
+                canvas.insertSubview(container, belowSubview: branch)
+            }
         }
-        hosting.view.isHidden = false
-        let frame = surface.convert(surface.bounds, to: candidate)
-        if hosting.view.superview !== candidate { candidate.addSubview(hosting.view) }
-        if candidate.subviews.last !== hosting.view { candidate.bringSubviewToFront(hosting.view) }
-        if hosting.view.frame != frame { hosting.view.frame = frame }
     }
 
     static func detached(_ candidate: UIView) {
-        if candidate === cover, candidate.window == nil { removeHosting() }
+        if canvas?.window == nil { removeHosting() }
     }
 
     private static func setEnabled(_ enabled: Bool) {
@@ -78,52 +109,54 @@ final class KaraokeOverlayPresenter {
 
     static func present() {
         setEnabled(true)
-        show()
+        retryCount = 0
+        if !show() { restoreIfNeeded() }
     }
 
     static func restoreIfNeeded() {
-        guard isEnabled, !isPresented, !restoreScheduled, cover?.window != nil else { return }
+        guard isEnabled, UserDefaults.karaokeOptions.enabled, UserDefaults.lyricsSource.supportsCustomLyricsView,
+              !isPresented, !restoreScheduled else { return }
         restoreScheduled = true
-        DispatchQueue.main.async {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
             restoreScheduled = false
-            if isEnabled { show() }
+            guard isEnabled else { return }
+            if !show(), retryCount < 4 {
+                retryCount += 1
+                restoreIfNeeded()
+            }
         }
     }
 
-    private static func show() {
-        guard !isPresented else { return }
-        guard #available(iOS 15.0, *), UserDefaults.karaokeOptions.enabled,
-              UserDefaults.lyricsSource.supportsCustomLyricsView else { return }
-        if cover?.window == nil {
-            let root = WindowHelper.shared.rootViewController.view
-            cover = root?.eeveeFirst(UIView.self, where: {
-                NSStringFromClass(type(of: $0)) == coverClass && $0.window != nil && PlayerPlacement.contains($0)
-            })
-        }
-        guard let cover, let surface = artworkSurface(in: cover) else {
-            writeDebugLog("[Karaoke] artwork surface unavailable; open Now Playing first")
-            return
-        }
-        var responder: UIResponder? = cover
+    private static func show() -> Bool {
+        if isPresented { return true }
+        guard #available(iOS 15.0, *), let canvas, canvas.window != nil,
+              let frame = lyricsFrame(in: canvas), UserDefaults.karaokeOptions.enabled,
+              UserDefaults.lyricsSource.supportsCustomLyricsView else { return false }
+        var responder: UIResponder? = canvas
         while responder != nil && !(responder is UIViewController) { responder = responder?.next }
-        guard let controller = responder as? UIViewController else { return }
+        guard let controller = responder as? UIViewController else { return false }
         let tracker = KaraokePlaybackTracker.shared
-        guard let trackId = tracker.playerReportedTrackId() ?? tracker.currentTrackId() else { return }
-        let lyrics = KaraokeLyricsStore.shared.lyrics(forTrackId: trackId)
-        let child = UIHostingController(rootView: KaraokeLyricsView(trackId: trackId, lyrics: lyrics, onDismiss: dismiss))
+        guard let trackId = tracker.playerReportedTrackId() ?? tracker.currentTrackId() else { return false }
+        viewport.frame = frame
+        let child = UIHostingController(rootView: KaraokeLyricsView(trackId: trackId,
+            lyrics: KaraokeLyricsStore.shared.lyrics(forTrackId: trackId), viewport: viewport, onDismiss: dismiss))
         child.overrideUserInterfaceStyle = .dark
-        child.view.backgroundColor = .black
-        child.view.clipsToBounds = true
-        child.view.layer.cornerRadius = 12
+        child.view.backgroundColor = .clear
+        let plane = KaraokeCanvasContainer(frame: canvas.bounds)
+        plane.activeRect = frame
+        plane.clipsToBounds = true
         controller.addChild(child)
-        cover.addSubview(child.view)
-        child.view.frame = surface.convert(surface.bounds, to: cover)
+        canvas.addSubview(plane)
+        plane.addSubview(child.view)
+        child.view.frame = plane.bounds
         child.didMove(toParent: controller)
-        previousAccessibilityHidden = surface.accessibilityElementsHidden
-        surface.accessibilityElementsHidden = true
-        artwork = surface
+        container = plane
         hosting = child
         isPresented = true
+        retryCount = 0
+        updateFrame()
+        writeDebugLog("[Karaoke] Canvas replacement mounted; lyrics viewport \(frame)")
+        return true
     }
 
     static func dismiss() {
@@ -136,8 +169,8 @@ final class KaraokeOverlayPresenter {
         hosting.willMove(toParent: nil)
         hosting.view.removeFromSuperview()
         hosting.removeFromParent()
-        artwork?.accessibilityElementsHidden = previousAccessibilityHidden
-        artwork = nil
+        container?.removeFromSuperview()
+        container = nil
         self.hosting = nil
         isPresented = false
     }
@@ -148,4 +181,10 @@ final class KaraokeOverlayPresenter {
         guard let trackId = tracker.playerReportedTrackId() ?? tracker.currentTrackId() else { return false }
         return KaraokeLyricsStore.shared.lyrics(forTrackId: trackId) != nil
     }
+}
+
+/// Canvas background can fill the layer while touches outside the lyrics reach native controls.
+private final class KaraokeCanvasContainer: UIView {
+    var activeRect = CGRect.zero
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool { activeRect.contains(point) }
 }

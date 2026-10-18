@@ -1,20 +1,27 @@
 import SwiftUI
 import UIKit
 
+final class KaraokeViewport: ObservableObject {
+    @Published var frame = CGRect.zero
+}
+
 @available(iOS 15.0, *)
 struct KaraokeLyricsView: View {
     var onDismiss: () -> Void
+    @ObservedObject private var viewport: KaraokeViewport
     @StateObject private var model: KaraokeLyricsViewModel
-    private let options = UserDefaults.karaokeOptions
+    @State private var options = UserDefaults.karaokeOptions
 
-    init(trackId: String?, lyrics: KaraokeLyricsDto?, onDismiss: @escaping () -> Void) {
+    init(trackId: String?, lyrics: KaraokeLyricsDto?, viewport: KaraokeViewport, onDismiss: @escaping () -> Void) {
         self.onDismiss = onDismiss
+        self.viewport = viewport
         _model = StateObject(wrappedValue: KaraokeLyricsViewModel(trackId: trackId, lyrics: lyrics))
     }
 
     var body: some View {
         GeometryReader { geo in
-            ZStack(alignment: .topTrailing) {
+            let frame = viewport.frame.isEmpty ? CGRect(origin: .zero, size: geo.size) : viewport.frame
+            ZStack(alignment: .topLeading) {
                 KaraokeBackgroundView()
                     .id(model.trackId)
                 LinearGradient(
@@ -23,33 +30,43 @@ struct KaraokeLyricsView: View {
                 )
                 .ignoresSafeArea()
                 .allowsHitTesting(false)
-                if let lyrics = model.lyrics {
-                    content(lyrics: lyrics, layouts: model.layouts, size: geo.size)
-                        // A new song starts from its own scroll position and state.
-                        .id(model.trackId)
-                } else {
-                    VStack(spacing: 16) {
-                        if model.loadingFailed {
-                            Image(systemName: "mic.slash")
-                                .font(.system(size: 32))
-                            Text("karaoke_loading_failed".localized)
-                                .multilineTextAlignment(.center)
-                            Button("karaoke_retry".localized) { model.retry() }
-                                .buttonStyle(.bordered)
-                        } else {
-                            ProgressView()
-                                .tint(.white)
-                            Text("karaoke_loading".localized)
+                ZStack(alignment: .topTrailing) {
+                    if let lyrics = model.lyrics {
+                        content(lyrics: lyrics, layouts: model.layouts, size: frame.size)
+                            // A new song starts from its own scroll position and state.
+                            .id(model.trackId)
+                    } else {
+                        VStack(spacing: 16) {
+                            if model.loadingFailed {
+                                Image(systemName: "mic.slash")
+                                    .font(.system(size: 32))
+                                Text("karaoke_loading_failed".localized)
+                                    .multilineTextAlignment(.center)
+                                Button("karaoke_retry".localized) { model.retry() }
+                                    .buttonStyle(.bordered)
+                            } else {
+                                ProgressView()
+                                    .tint(.white)
+                                Text("karaoke_loading".localized)
+                            }
                         }
+                        .foregroundColor(.white)
+                        .padding(32)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
-                    .foregroundColor(.white)
-                    .padding(32)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    closeButton
                 }
-                closeButton
+                .frame(width: frame.width, height: frame.height)
+                .clipped()
+                .position(x: frame.midX, y: frame.midY)
             }
         }
         .preferredColorScheme(.dark)
+        .onReceive(NotificationCenter.default.publisher(for: .eeveeKaraokeOptionsChanged)) { _ in
+            let updated = UserDefaults.karaokeOptions
+            if options != updated { options = updated }
+            if !updated.enabled { onDismiss() }
+        }
     }
 
     private func content(lyrics: KaraokeLyricsDto, layouts: [KaraokeLineLayout], size: CGSize) -> some View {
@@ -70,7 +87,7 @@ struct KaraokeLyricsView: View {
     private func activeLineIndex(in lyrics: KaraokeLyricsDto, at currentMs: Int) -> Int? {
         guard !lyrics.lines.isEmpty else { return nil }
         for (index, line) in lyrics.lines.enumerated().reversed() {
-            if currentMs >= line.startMs {
+            if currentMs >= line.startMs && !line.isBackground {
                 return index
             }
         }
@@ -129,10 +146,11 @@ private struct KaraokeScrollingLines: View {
                         KaraokeLineView(
                             layout: layout,
                             currentMs: currentMs,
-                            isActiveLine: index == activeLineIndex,
+                            isActiveLine: index == activeLineIndex || (currentMs >= layout.startMs && currentMs < layout.endMs),
                             availableWidth: max(0, size.width - horizontalPadding * 2),
-                            alignment: alignment,
-                            fontSize: fontSize,
+                            alignment: options.textAlignment == .automatic
+                                ? (layout.isOppositeAligned ? .trailing : .leading) : alignment,
+                            fontSize: fontSize * (layout.isBackground ? 0.72 : 1),
                             distance: index - (activeLineIndex ?? 0),
                             isBrowsing: isBrowsing,
                             blurIntensity: options.blurIntensity

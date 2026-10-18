@@ -179,12 +179,15 @@ class SpicyLyricsRepository: LyricsRepository {
 
             lines.append(LyricsLineDto(content: lineText.lyricsNoteIfEmpty, offsetMs: lineStartMs))
 
-            if !karaokeSyllables.isEmpty {
-                karaokeLines.append(KaraokeLineDto(
-                    syllables: karaokeSyllables,
-                    startMs: lineStartMs,
-                    endMs: lineEndMs
-                ))
+            let opposite = entry["OppositeAligned"]?.boolValue ?? false
+            if let vocal = Self.vocalLine(lead, start: lineStartMs, end: lineEndMs, opposite: opposite) {
+                karaokeLines.append(vocal)
+            }
+            for background in entry["Background"]?.arrayValue ?? [] {
+                if let vocal = Self.vocalLine(background, start: lineStartMs, end: lineEndMs,
+                                              opposite: opposite, isBackground: true) {
+                    karaokeLines.append(vocal)
+                }
             }
         }
 
@@ -229,11 +232,29 @@ class SpicyLyricsRepository: LyricsRepository {
         )
     }
 
-    // Source timing sometimes overlaps across lines; clamp so the highlight never runs out of order.
+    private static func vocalLine(_ node: SpicyLyricsJSON, start: Int, end: Int,
+                                  opposite: Bool, isBackground: Bool = false,
+                                  fallbackText: String = "") -> KaraokeLineDto? {
+        let startMs = node["StartTime"]?.doubleValue.map { Int($0 * 1000) } ?? start
+        let endMs = node["EndTime"]?.doubleValue.map { Int($0 * 1000) } ?? end
+        var timing = syllables(node["Syllables"]?.arrayValue ?? [])
+        if timing.isEmpty {
+            let text = node["Text"]?.stringValue ?? node.stringValue ?? fallbackText
+            timing = text.split(whereSeparator: { $0.isWhitespace }).map {
+                KaraokeSyllableDto(text: String($0), startMs: startMs, endMs: startMs, isPartOfWord: false)
+            }
+        }
+        guard !timing.isEmpty else { return nil }
+        return KaraokeLineDto(syllables: timing, startMs: startMs,
+                              endMs: max(endMs, timing.map(\.endMs).max() ?? startMs),
+                              isOppositeAligned: opposite, isBackground: isBackground)
+    }
+
+    // Keep each voice ordered internally; simultaneous voices must retain their own timestamps.
     private static func normalizeMonotonicTiming(_ lines: [KaraokeLineDto]) -> [KaraokeLineDto] {
         var result = lines
-        var previousEndMs = Int.min
         for lineIndex in result.indices {
+            var previousEndMs = Int.min
             for syllableIndex in result[lineIndex].syllables.indices {
                 var syllable = result[lineIndex].syllables[syllableIndex]
                 if syllable.startMs < previousEndMs {
@@ -273,19 +294,19 @@ class SpicyLyricsRepository: LyricsRepository {
             let startMs   = startTime.map { Int($0 * 1000) }
             lines.append(LyricsLineDto(content: text.lyricsNoteIfEmpty, offsetMs: startMs))
 
-            // Line-synced songs still get the custom lyrics view: every word lights up with its line.
-            guard let lineStartMs = startMs, !text.isEmpty else { continue }
-            let words = text.split(separator: " ", omittingEmptySubsequences: true)
-            guard !words.isEmpty else { continue }
-
+            guard let lineStartMs = startMs else { continue }
             let lineEndMs = max(endTime.map { Int($0 * 1000) } ?? lineStartMs, lineStartMs)
-            karaokeLines.append(KaraokeLineDto(
-                syllables: words.map {
-                    KaraokeSyllableDto(text: String($0), startMs: lineStartMs, endMs: lineStartMs, isPartOfWord: false)
-                },
-                startMs: lineStartMs,
-                endMs: lineEndMs
-            ))
+            let opposite = entry["OppositeAligned"]?.boolValue ?? false
+            if let vocal = Self.vocalLine(entry["Lead"] ?? entry, start: lineStartMs,
+                                          end: lineEndMs, opposite: opposite, fallbackText: text) {
+                karaokeLines.append(vocal)
+            }
+            for background in entry["Background"]?.arrayValue ?? [] {
+                if let vocal = Self.vocalLine(background, start: lineStartMs, end: lineEndMs,
+                                              opposite: opposite, isBackground: true) {
+                    karaokeLines.append(vocal)
+                }
+            }
         }
 
         let romanization: LyricsRomanizationStatus = hasRomanized

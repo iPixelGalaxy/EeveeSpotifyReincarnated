@@ -540,3 +540,9 @@ restart_later = "Later";
 
 "karaoke_state_enabled" = "Lyrics enabled";
 "karaoke_state_disabled" = "Lyrics disabled";
+
+"karaoke_alignment_automatic" = "Default";
+
+"player_part_talkAboutSong" = "Talk about this song";
+"player_part_aboutSong" = "About this song";
+"player_part_artistCircles" = "Artist circles";

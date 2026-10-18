@@ -33,6 +33,8 @@ struct KaraokeLineDto {
     var startMs: Int
     var endMs: Int
     var isInterlude = false
+    var isOppositeAligned = false
+    var isBackground = false
 
     var plainText: String { syllables.plainText }
 
@@ -120,7 +122,7 @@ extension KaraokeLyricsDto {
         for (index, line) in ordered.enumerated() {
             if !line.isInterlude, line.startMs - previousEnd >= 3000 {
                 display.append(KaraokeLineDto(syllables: [], startMs: previousEnd,
-                                              endMs: line.startMs, isInterlude: true))
+                                              endMs: line.startMs, isInterlude: true, isOppositeAligned: line.isOppositeAligned))
             }
             display.append(line)
             // Unknown line duration must not turn the entire lyric into an instrumental break.

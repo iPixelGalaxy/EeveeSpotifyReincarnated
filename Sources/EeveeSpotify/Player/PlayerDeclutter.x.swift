@@ -5,13 +5,15 @@ struct PlayerButtonsDeclutterGroup: HookGroup {}
 struct PlayerAddToDeclutterGroup: HookGroup {}
 struct PlayerLyricsPreviewDeclutterGroup: HookGroup {}
 struct PlayerCardsDeclutterGroup: HookGroup {}
+struct PlayerAssistantDeclutterGroup: HookGroup {}
 
 enum PlayerPart: String, CaseIterable, Codable {
     case lyricsPreview, shuffle, `repeat`, addTo, queue, share, connect
+    case talkAboutSong, aboutSong, artistCircles
     case allCards, lyricsCard, aboutArtist, relatedVideos, songDNA, liveEvents, exploreArtist, releaseCountdown, credits, merch, recommendations
 
     static let buttons: [PlayerPart] = [.lyricsPreview, .shuffle, .repeat, .addTo, .queue, .share, .connect]
-    static let cards: [PlayerPart] = [.allCards, .lyricsCard, .aboutArtist, .relatedVideos, .songDNA, .liveEvents, .exploreArtist, .releaseCountdown, .credits, .merch, .recommendations]
+    static let cards: [PlayerPart] = [.allCards, .talkAboutSong, .aboutSong, .artistCircles, .lyricsCard, .aboutArtist, .relatedVideos, .songDNA, .liveEvents, .exploreArtist, .releaseCountdown, .credits, .merch, .recommendations]
 
     var buttonIds: [String] {
         switch self {
@@ -26,6 +28,9 @@ enum PlayerPart: String, CaseIterable, Codable {
 
     var cardMarkers: [String] {
         switch self {
+        case .talkAboutSong: return ["Martini_FloatingChatImpl", "ChatPill"]
+        case .aboutSong: return ["AboutTheSong", "Martini_ElementImpl"]
+        case .artistCircles: return ["ArtistPortrait", "ArtistAvatar", "ArtistInfoBubble"]
         case .lyricsCard: return ["Lyrics_CardElementImpl"]
         case .aboutArtist: return ["CreatorBiography"]
         case .relatedVideos: return ["VideoRecommendations"]
@@ -84,6 +89,38 @@ enum PlayerDeclutter {
         view.accessibilityElementsHidden = true
     }
 
+    static func hideArtistCircles(in cell: UIView, below: CGFloat? = nil) {
+        guard hidden.contains(.artistCircles) || hidden.contains(.allCards) else { return }
+        var queue = cell.subviews
+        while !queue.isEmpty {
+            let view = queue.removeFirst()
+            queue.append(contentsOf: view.subviews)
+            let width = view.bounds.width
+            let height = view.bounds.height
+            guard width >= 48, height >= 48, abs(width - height) < width * 0.1 else { continue }
+            let name = NSStringFromClass(type(of: view))
+            let circular = view.layer.cornerRadius >= width * 0.45
+            let portrait = name.contains("Avatar") || name.contains("Portrait") || name.contains("ArtistAboutImageView")
+            guard portrait || circular else { continue }
+            if let below, let window = view.window,
+               view.convert(view.bounds, to: window).midY < below { continue }
+            var ancestor: UIView? = view
+            var inPlayer = false
+            while let current = ancestor {
+                var context = NSStringFromClass(type(of: current))
+                if let controller = current.next as? UIViewController { context += NSStringFromClass(type(of: controller)) }
+                if context.contains("NowPlaying_Bar") { break }
+                if context.contains("NowPlaying") { inPlayer = true; break }
+                ancestor = current.superview
+            }
+            guard inPlayer else { continue }
+            let image = view.layer.contents != nil || name.contains("Image") || view.eeveeFirst(UIView.self, where: {
+                $0 is UIImageView || $0.layer.contents != nil || NSStringFromClass(type(of: $0)).contains("Image")
+            }) != nil
+            if portrait || image { vanish(view) }
+        }
+    }
+
     static func hiddenCard(for cell: UIView) -> PlayerPart? {
         let content = (cell as? UICollectionViewCell)?.contentView.subviews.first
         let now = CACurrentMediaTime()
@@ -140,6 +177,11 @@ extension UIView {
 class PlayerCardCellHook: ClassHook<UICollectionViewCell> {
     typealias Group = PlayerCardsDeclutterGroup
     static let targetName = "_TtC12Element_List18CollectionViewCell"
+
+    func layoutSubviews() {
+        orig.layoutSubviews()
+        PlayerDeclutter.hideArtistCircles(in: target)
+    }
 
     func preferredLayoutAttributesFittingAttributes(_ attributes: UICollectionViewLayoutAttributes) -> UICollectionViewLayoutAttributes {
         let result = orig.preferredLayoutAttributesFittingAttributes(attributes)
@@ -209,6 +251,8 @@ func activatePlayerDeclutter() {
         active.append(name)
     }
 
+    activate("player extras", hidden.contains(.talkAboutSong) || hidden.contains(.artistCircles) || hidden.contains(.allCards),
+             PlayerAssistantDeclutterGroup(), PlayerAssistantHook.targetName, PlayerAssistantFooterHook.targetName)
     activate("buttons", !PlayerDeclutter.hiddenIds.isEmpty, PlayerButtonsDeclutterGroup(),
              PlayerControlsDeclutterHook.targetName, PlayerFooterDeclutterHook.targetName)
     activate("add to", hidden.contains(.addTo), PlayerAddToDeclutterGroup(), PlayerInfoDeclutterHook.targetName)
@@ -217,4 +261,90 @@ func activatePlayerDeclutter() {
     eeveeLog("[EeveeSpotify][Player] Declutter: hiding %@; active %@ (%.2f ms)",
              hidden.map(\.rawValue).sorted().joined(separator: ", "), active.joined(separator: ", "),
              (CFAbsoluteTimeGetCurrent() - start) * 1000)
+}
+
+
+/// The prompt can float outside collection cells; suppress its entire root, including its backdrop.
+private enum PlayerAssistantVisibility {
+    static weak var footer: UIView?
+    static let roots = NSHashTable<UIView>.weakObjects()
+    private static var savedAlphaKey: UInt8 = 0
+    private final class Visibility {
+        let alpha: CGFloat
+        let interactive: Bool
+        let accessibilityHidden: Bool
+        init(_ view: UIView) {
+            alpha = view.alpha
+            interactive = view.isUserInteractionEnabled
+            accessibilityHidden = view.accessibilityElementsHidden
+        }
+    }
+
+    static func refresh() {
+        var visible = footer?.window != nil
+        if let footer, let window = footer.window {
+            visible = footer.convert(footer.bounds, to: window).intersects(window.bounds)
+            var ancestor: UIView? = footer
+            while let view = ancestor {
+                if view.isHidden || view.alpha <= 0.01 { visible = false }
+                ancestor = view.superview
+            }
+        }
+        let hidePrompt = visible && (PlayerDeclutter.hidden.contains(.talkAboutSong) || PlayerDeclutter.hidden.contains(.allCards))
+        for root in roots.allObjects {
+            if hidePrompt {
+                if objc_getAssociatedObject(root, &savedAlphaKey) == nil {
+                    objc_setAssociatedObject(root, &savedAlphaKey, Visibility(root), .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+                }
+                PlayerDeclutter.vanish(root)
+            } else if let alpha = objc_getAssociatedObject(root, &savedAlphaKey) as? Visibility {
+                root.alpha = alpha.alpha
+                root.isUserInteractionEnabled = alpha.interactive
+                root.accessibilityElementsHidden = alpha.accessibilityHidden
+                objc_setAssociatedObject(root, &savedAlphaKey, nil, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+            }
+        }
+    }
+}
+
+class PlayerAssistantHook: ClassHook<UIViewController> {
+    typealias Group = PlayerAssistantDeclutterGroup
+    static let targetName = "_TtC24Martini_FloatingChatImpl26FloatingChatViewController"
+
+    func viewDidLayoutSubviews() {
+        orig.viewDidLayoutSubviews()
+        if let root = target.viewIfLoaded { PlayerAssistantVisibility.roots.add(root) }
+        PlayerAssistantVisibility.refresh()
+    }
+}
+
+class PlayerAssistantFooterHook: ClassHook<UIViewController> {
+    typealias Group = PlayerAssistantDeclutterGroup
+    static let targetName = "_TtC20NowPlaying_ModesImpl18FooterElementsUnit"
+
+    func viewDidLayoutSubviews() {
+        orig.viewDidLayoutSubviews()
+        PlayerAssistantVisibility.footer = target.viewIfLoaded
+        PlayerAssistantVisibility.refresh()
+        if let footer = target.viewIfLoaded, let window = footer.window {
+            // Portraits may float outside collection cells on the Canvas layout.
+            let row = footer.eeveeFirst(UIStackView.self) ?? footer
+            let floor = row.convert(row.bounds, to: window).minY
+            var playerRoot = footer
+            var ancestor: UIView? = footer
+            while let view = ancestor, view !== window {
+                var name = NSStringFromClass(type(of: view))
+                if let controller = view.next as? UIViewController { name += NSStringFromClass(type(of: controller)) }
+                if name.contains("NowPlaying"), !name.contains("NowPlaying_Bar") { playerRoot = view }
+                ancestor = view.superview
+            }
+            PlayerDeclutter.hideArtistCircles(in: playerRoot, below: floor)
+        }
+    }
+
+    func viewDidDisappear(_ animated: Bool) {
+        orig.viewDidDisappear(animated)
+        PlayerAssistantVisibility.footer = nil
+        PlayerAssistantVisibility.refresh()
+    }
 }
