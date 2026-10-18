@@ -5,6 +5,14 @@ import MetalKit
 @available(iOS 15.0, *)
 struct KaraokeBackgroundView: View {
     let trackId: String?
+    private static var lastImage: UIImage?
+    private static var lastFingerprint: Data?
+
+    init(trackId: String?) {
+        self.trackId = trackId
+        _albumArtImage = State(initialValue: Self.lastImage)
+        _fingerprint = State(initialValue: Self.lastFingerprint)
+    }
     @State private var albumArtImage: UIImage?
     @State private var colors = Self.placeholderColors
     @State private var fingerprint: Data?
@@ -12,15 +20,28 @@ struct KaraokeBackgroundView: View {
     @State private var refreshWork: DispatchWorkItem?
 
     private static let placeholderColors: [Color] = [Color(white: 0.08), Color(white: 0.04), Color(white: 0.02)]
-    private static let metalRendererSupported: Bool = {
-        guard let device = MTLCreateSystemDefaultDevice() else { return false }
-        return KaraokeBackgroundRenderer(device: device) != nil
-    }()
+    private static let metalRendererSupported = KaraokeBackgroundRenderer.shared != nil
 
     var body: some View {
         Group {
             if let image = albumArtImage, Self.metalRendererSupported {
-                KaraokeMetalBackgroundView(albumArt: image).ignoresSafeArea()
+                KaraokeMetalBackgroundView(albumArt: image).ignoresSafeArea().transition(.opacity)
+            } else if let image = albumArtImage {
+                TimelineView(.periodic(from: .now, by: 1.0 / 24.0)) { timeline in
+                    GeometryReader { geometry in
+                        let time = timeline.date.timeIntervalSinceReferenceDate
+                        ZStack {
+                            Color(white: 0.04)
+                            Image(uiImage: image).resizable().scaledToFill()
+                                .frame(width: geometry.size.width, height: geometry.size.height)
+                                .scaleEffect(1.35 + 0.03 * sin(time * 0.13))
+                                .rotationEffect(.degrees(6 * sin(time * 0.11)))
+                                .offset(x: 35 * sin(time * 0.17), y: 35 * cos(time * 0.14))
+                                .blur(radius: 45)
+                                .id(fingerprint).transition(.opacity)
+                        }.frame(width: geometry.size.width, height: geometry.size.height).clipped()
+                    }
+                }.ignoresSafeArea()
             } else {
                 TimelineView(.periodic(from: .now, by: 1.0 / 12.0)) { timeline in
                     let time = timeline.date.timeIntervalSinceReferenceDate
@@ -31,6 +52,7 @@ struct KaraokeBackgroundView: View {
                 }
             }
         }
+        .allowsHitTesting(false)
         .onAppear { restart() }
         .onChange(of: trackId) { _ in restart() }
         .onDisappear { refreshWork?.cancel(); refreshWork = nil; generation = UUID() }
@@ -39,10 +61,7 @@ struct KaraokeBackgroundView: View {
     private func restart() {
         refreshWork?.cancel()
         generation = UUID()
-        albumArtImage = nil
-        fingerprint = nil
-        colors = Self.placeholderColors
-        writeDebugLog("[Karaoke][background] reset for track=\(trackId ?? "nil")")
+        writeDebugLog("[Karaoke][background] refresh for track=\(trackId ?? "nil")")
         refresh(token: generation, attempt: 0)
     }
 
@@ -51,15 +70,16 @@ struct KaraokeBackgroundView: View {
         let playing = KaraokePlaybackTracker.shared.playerReportedTrackId() ?? KaraokePlaybackTracker.shared.currentTrackId()
         guard playing == trackId else {
             refreshWork = nil
-            albumArtImage = nil
-            fingerprint = nil
-            colors = Self.placeholderColors
             return
         }
         if let image = AlbumArtLocator.currentAlbumArt(forTrackId: trackId),
            let signature = Self.signature(image), signature != fingerprint {
-            fingerprint = signature
-            albumArtImage = image
+            Self.lastImage = image
+            Self.lastFingerprint = signature
+            withAnimation(.easeInOut(duration: 0.9)) {
+                fingerprint = signature
+                albumArtImage = image
+            }
             writeDebugLog("[Karaoke][background] updated artwork for track=\(trackId ?? "nil") attempt=\(attempt)")
             // Keep a slow refresh after startup: delayed artwork can replace an earlier cached image.
             if !Self.metalRendererSupported {

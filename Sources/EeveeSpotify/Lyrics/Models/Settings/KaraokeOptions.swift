@@ -16,18 +16,20 @@ struct KaraokeOptions: Codable, Hashable {
     var reversedDirection = false
     var enabled = true
     var blurIntensity: Double = 1.5
+    var textScale: Double = 0.95
     var timingOffsetMs: Double = 0
     var allowScreenRecording = true
 
-    init(textAlignment: KaraokeTextAlignment = .automatic, reversedDirection: Bool = false, enabled: Bool = true, blurIntensity: Double = 1.5) {
+    init(textAlignment: KaraokeTextAlignment = .automatic, reversedDirection: Bool = false, enabled: Bool = true, blurIntensity: Double = 1.5, textScale: Double = 0.95) {
         self.textAlignment = textAlignment
         self.reversedDirection = reversedDirection
         self.enabled = enabled
         self.blurIntensity = blurIntensity
+        self.textScale = min(1.3, max(0.7, textScale))
     }
 
     private enum CodingKeys: String, CodingKey {
-        case textAlignment, reversedDirection, enabled, blurIntensity, timingOffsetMs, allowScreenRecording
+        case textAlignment, reversedDirection, enabled, blurIntensity, timingOffsetMs, allowScreenRecording, textScale
     }
 
     // Settings saved before these fields existed must keep decoding.
@@ -37,6 +39,7 @@ struct KaraokeOptions: Codable, Hashable {
         reversedDirection = try container.decodeIfPresent(Bool.self, forKey: .reversedDirection) ?? false
         enabled = try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
         blurIntensity = try container.decodeIfPresent(Double.self, forKey: .blurIntensity) ?? 1.5
+        textScale = min(1.3, max(0.7, try container.decodeIfPresent(Double.self, forKey: .textScale) ?? 0.95))
         timingOffsetMs = try container.decodeIfPresent(Double.self, forKey: .timingOffsetMs) ?? 0
         allowScreenRecording = try container.decodeIfPresent(Bool.self, forKey: .allowScreenRecording) ?? true
     }

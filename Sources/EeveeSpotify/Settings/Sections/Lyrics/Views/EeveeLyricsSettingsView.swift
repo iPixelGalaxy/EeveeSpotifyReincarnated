@@ -65,6 +65,17 @@ struct EeveeLyricsSettingsView: View {
 
                 VStack(alignment: .leading, spacing: 5) {
                     HStack {
+                        Text("karaoke_text_scale".localized)
+                        Spacer()
+                        Text(String(format: "%.0f%%", karaokeOptions.textScale * 100)).foregroundColor(.gray)
+                    }
+                    Slider(value: $karaokeOptions.textScale, in: 0.7...1.3, step: 0.01)
+                    if abs(karaokeOptions.textScale - 1) > 0.001 {
+                        Button("karaoke_text_scale_reset".localized) { karaokeOptions.textScale = 1 }
+                    }
+                }
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack {
                         Text("karaoke_blur_intensity".localized)
                         Spacer()
                         Text(String(format: "%.1f", karaokeOptions.blurIntensity))

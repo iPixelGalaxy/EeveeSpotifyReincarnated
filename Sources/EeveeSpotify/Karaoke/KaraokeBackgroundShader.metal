@@ -48,11 +48,13 @@ struct KaraokeBgParams {
     float time;
     float warpIntensity;  // matches Kawarp's warpIntensity option (0-1)
     float blurRadius;     // approximates blurPasses' visual effect
+    float blendProgress;
 };
 
 fragment float4 karaoke_bg_fragment(
     VertexOut in [[stage_in]],
     texture2d<float> albumArt [[texture(0)]],
+    texture2d<float> previousArt [[texture(1)]],
     constant KaraokeBgParams &params [[buffer(0)]]
 ) {
     constexpr sampler s(coord::normalized, address::clamp_to_edge, filter::linear);
@@ -61,26 +63,25 @@ fragment float4 karaoke_bg_fragment(
     // the same core idea as Kawarp's simplex-noise warping — distorting
     // where we sample from, rather than the pixel colors directly, is
     // what gives the "fluid" look rather than a static blur.
-    float2 warpUV = in.uv * 3.0 + float2(params.time * 0.05, params.time * 0.03);
-    float2 offset = float2(
-        valueNoise(warpUV),
-        valueNoise(warpUV + float2(7.3, 2.1))
-    ) * params.warpIntensity * 0.08;
-
-    float2 sampleUV = clamp(in.uv + offset, 0.0, 1.0);
-
-    // Multi-tap box blur approximating Kawase-style cheap blur — a real
-    // Kawase blur does this via downsample/upsample mip passes for
-    // efficiency; this single-pass multi-tap version is simpler to write
-    // as a first version and still produces a comparable soft blur look,
-    // at the cost of being somewhat less efficient per-pixel than true
-    // Kawase blur for the same visual softness.
+    // Keep the flow clock continuous while tracks and textures change.
+    float angle = 0.10 * sin(params.time * 0.11);
+    float2 centered = in.uv - 0.5;
+    float2 rotated = float2(centered.x * cos(angle) - centered.y * sin(angle),
+                            centered.x * sin(angle) + centered.y * cos(angle));
+    float2 drift = float2(sin(params.time * 0.17), cos(params.time * 0.13)) * 0.07;
+    float2 baseUV = rotated / (1.18 + 0.03 * sin(params.time * 0.09)) + 0.5 + drift;
+    float2 warpUV = baseUV * 2.8 + float2(params.time * 0.14, params.time * 0.10);
+    float2 offset = float2(valueNoise(warpUV), valueNoise(warpUV + float2(7.3, 2.1)))
+        * params.warpIntensity * 0.15;
+    float2 sampleUV = clamp(baseUV + offset, 0.0, 1.0);
+    float blend = smoothstep(0.0, 1.0, params.blendProgress);
     float4 color = float4(0);
     const int taps = 8;
     for (int i = 0; i < taps; i++) {
         float angle = (float(i) / float(taps)) * 6.28318;
         float2 tapOffset = float2(cos(angle), sin(angle)) * params.blurRadius;
-        color += albumArt.sample(s, sampleUV + tapOffset);
+        float2 uv = sampleUV + tapOffset;
+        color += mix(previousArt.sample(s, uv), albumArt.sample(s, uv), blend);
     }
     color /= float(taps);
 

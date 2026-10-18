@@ -23,7 +23,6 @@ struct KaraokeLyricsView: View {
             let frame = viewport.frame.isEmpty ? CGRect(origin: .zero, size: geo.size) : viewport.frame
             ZStack(alignment: .topLeading) {
                 KaraokeBackgroundView(trackId: model.trackId)
-                    .id(model.trackId)
                 LinearGradient(
                     colors: [.black.opacity(0.40), .black.opacity(0.32), .black.opacity(0.55)],
                     startPoint: .top, endPoint: .bottom
@@ -125,7 +124,7 @@ private struct KaraokeScrollingLines: View {
     @State private var naturalContentHeight: CGFloat = .infinity
 
     private var horizontalPadding: CGFloat { max(20, size.width * 0.05) }
-    private var fontSize: CGFloat { 1.3 * 0.95 * min(36, max(28, size.width * 0.075)) }
+    private var fontSize: CGFloat { 1.3 * CGFloat(min(1.3, max(0.7, options.textScale))) * min(36, max(28, size.width * 0.075)) }
     @StateObject private var anchorLayout = KaraokeTextPlanCache()
     private var focus: UnitPoint {
         let lineHeight = UIFont.systemFont(ofSize: fontSize, weight: .bold).lineHeight + fontSize * 0.23

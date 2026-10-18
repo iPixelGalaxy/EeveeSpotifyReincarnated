@@ -11,11 +11,19 @@ import EeveeSpotifyC
 /// simulator without Metal support, shader compile issue) — callers
 /// should fall back to the placeholder gradient rather than crash.
 final class KaraokeBackgroundRenderer: NSObject, MTKViewDelegate {
-    private let device: MTLDevice
+    static let shared: KaraokeBackgroundRenderer? = {
+        guard let device = MTLCreateSystemDefaultDevice() else { return nil }
+        return KaraokeBackgroundRenderer(device: device)
+    }()
+    let device: MTLDevice
     private let commandQueue: MTLCommandQueue
     private let pipelineState: MTLRenderPipelineState
     private var albumTexture: MTLTexture?
-    private weak var sourceImage: UIImage?
+    private var sourceImage: UIImage?
+    private var previousTexture: MTLTexture?
+    private var pendingImage: UIImage?
+    private var transitionStart: CFTimeInterval = 0
+    private let transitionDuration: CFTimeInterval = 0.9
     private static let imageContext = CIContext()
     private let startTime = CACurrentMediaTime()
 
@@ -52,18 +60,30 @@ final class KaraokeBackgroundRenderer: NSObject, MTKViewDelegate {
     }
 
     func setAlbumArt(_ image: UIImage) {
-        guard sourceImage !== image, let original = image.cgImage else { return }
-        sourceImage = image
+        if sourceImage === image { pendingImage = nil; return }
+        guard let original = image.cgImage else { return }
+        if albumTexture != nil, CACurrentMediaTime() - transitionStart < transitionDuration {
+            pendingImage = image
+            return
+        }
         let input = CIImage(cgImage: original)
         let blurred = input.clampedToExtent().applyingFilter("CIGaussianBlur", parameters: [
             kCIInputRadiusKey: Double(original.width) * 0.08
         ]).cropped(to: input.extent)
         let cgImage = Self.imageContext.createCGImage(blurred, from: input.extent) ?? original
         let loader = MTKTextureLoader(device: device)
-        albumTexture = try? loader.newTexture(cgImage: cgImage, options: [
+        guard let next = try? loader.newTexture(cgImage: cgImage, options: [
             .SRGB: false,
             .textureUsage: NSNumber(value: MTLTextureUsage.shaderRead.rawValue),
-        ])
+        ]) else {
+            writeDebugLog("[Karaoke][background] texture upload failed; keeping previous artwork")
+            return
+        }
+        previousTexture = albumTexture
+        albumTexture = next
+        sourceImage = image
+        transitionStart = previousTexture == nil ? CACurrentMediaTime() - transitionDuration : CACurrentMediaTime()
+        writeDebugLog("[Karaoke][background] animated artwork blend started")
     }
 
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
@@ -77,20 +97,30 @@ final class KaraokeBackgroundRenderer: NSObject, MTKViewDelegate {
             return
         }
 
+        let blend = Float(min(1, max(0, (CACurrentMediaTime() - transitionStart) / transitionDuration)))
         var params = KaraokeBgParamsMirror(
             time: Float(CACurrentMediaTime() - startTime),
             warpIntensity: warpIntensity,
-            blurRadius: 0.012
+            blurRadius: 0.018,
+            blendProgress: blend
         )
 
         encoder.setRenderPipelineState(pipelineState)
         encoder.setFragmentTexture(albumTexture, index: 0)
+        encoder.setFragmentTexture(previousTexture ?? albumTexture, index: 1)
         encoder.setFragmentBytes(&params, length: MemoryLayout<KaraokeBgParamsMirror>.stride, index: 0)
         encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
         encoder.endEncoding()
 
         commandBuffer.present(drawable)
         commandBuffer.commit()
+        if blend >= 1 {
+            previousTexture = nil
+            if let pending = pendingImage {
+                pendingImage = nil
+                setAlbumArt(pending)
+            }
+        }
     }
 }
 
@@ -101,6 +131,7 @@ private struct KaraokeBgParamsMirror {
     var time: Float
     var warpIntensity: Float
     var blurRadius: Float
+    var blendProgress: Float
 }
 
 /// SwiftUI wrapper around the MTKView + renderer.
@@ -113,17 +144,14 @@ struct KaraokeMetalBackgroundView: UIViewRepresentable {
         view.enableSetNeedsDisplay = false
         view.isPaused = false
 
-        guard let device = MTLCreateSystemDefaultDevice() else {
-            writeDebugLog("[Karaoke] Metal not available on this device — placeholder gradient should be used instead")
+        guard let renderer = KaraokeBackgroundRenderer.shared else {
+            writeDebugLog("[Karaoke][background] animated bitmap fallback active")
             return view
         }
-        view.device = device
-
-        if let renderer = KaraokeBackgroundRenderer(device: device) {
-            renderer.setAlbumArt(albumArt)
-            view.delegate = renderer
-            context.coordinator.renderer = renderer
-        }
+        view.device = renderer.device
+        renderer.setAlbumArt(albumArt)
+        view.delegate = renderer
+        context.coordinator.renderer = renderer
         return view
     }
 

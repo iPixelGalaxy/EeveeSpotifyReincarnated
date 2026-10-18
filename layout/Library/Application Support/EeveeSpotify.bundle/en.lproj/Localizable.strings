@@ -554,3 +554,6 @@ restart_later = "Later";
 "player_part_fullScreen" = "Fullscreen control";
 
 "allow_screen_recording" = "Allow screen recording during playback";
+
+"karaoke_text_scale" = "Lyric text scale";
+"karaoke_text_scale_reset" = "Reset to 100%";
