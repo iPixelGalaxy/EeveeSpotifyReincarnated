@@ -67,6 +67,13 @@ enum GlassTabBar {
         _ = tintObserver
         self.stock = stock
         let bar = systemBar(on: stock)
+        if let window = stock.window, window.bounds.width > window.bounds.height {
+            bar.traitOverrides.verticalSizeClass = .regular
+            bar.traitOverrides.horizontalSizeClass = .compact
+        } else {
+            bar.traitOverrides.remove(UITraitVerticalSizeClass.self)
+            bar.traitOverrides.remove(UITraitHorizontalSizeClass.self)
+        }
         guard let row = tabRow(in: stock) else { return }
         row.superview?.layoutIfNeeded()
 

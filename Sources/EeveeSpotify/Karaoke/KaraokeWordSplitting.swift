@@ -4,7 +4,7 @@ import NaturalLanguage
 // Native adaptation of ExperimentalWordSync.ts's word units and weighted ranges.
 // Original phrase boundaries remain authoritative; generated timing is approximate.
 extension KaraokeLyricsDto {
-    func splittingTimedWords() -> KaraokeLyricsDto {
+    func splittingTimedWords(forcedBySpaceGravity: Bool = false) -> KaraokeLyricsDto {
         var result = self
         for index in result.lines.indices where !result.lines[index].isInterlude {
             let line = result.lines[index]
@@ -13,13 +13,17 @@ extension KaraokeLyricsDto {
             let instantaneous = !line.syllables.isEmpty && line.syllables.allSatisfy {
                 $0.startMs == line.startMs && $0.endMs <= $0.startMs
             }
+            let estimated = line.isLineSynced || instantaneous
+            if forcedBySpaceGravity && !estimated { continue }
             let source: [KaraokeSyllableDto]
             if line.isLineSynced || instantaneous {
                 source = [KaraokeSyllableDto(text: line.plainText, startMs: line.startMs,
                     endMs: max(line.startMs, line.endMs), isPartOfWord: false)]
             } else { source = line.syllables }
             let words = source.flatMap { splitTimedSyllable($0) }
-            if words != line.syllables { result.hasExperimentalWordTiming = true }
+            if words != line.syllables {
+                result.timingExperiments.insert(estimated ? (forcedBySpaceGravity ? .spaceGravity : .automaticSplitting) : .extraSplits)
+            }
             result.lines[index].syllables = words
             result.lines[index].isLineSynced = false
         }

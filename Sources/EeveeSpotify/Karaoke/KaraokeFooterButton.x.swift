@@ -252,6 +252,11 @@ class KaraokeVideoSwitchHook: ClassHook<UIView> {
 // Scope native visibility/style writes to the instances pinned during compact mode.
 class KaraokeCompactVisibilityHook: ClassHook<UIView> {
     typealias Group = KaraokeFooterGroup
+    @objc(setFrame:) func setFrame(_ frame: CGRect) {
+        let adjustedHeader = KaraokeOverlayPresenter.beginNativeHeaderFrame(target)
+        orig.setFrame(frame)
+        if adjustedHeader { KaraokeOverlayPresenter.endNativeHeaderFrame() }
+    }
     @objc(setAlpha:) func setAlpha(_ alpha: CGFloat) {
         orig.setAlpha(KaraokeOverlayPresenter.lockedCompactAlpha(alpha, in: target))
     }

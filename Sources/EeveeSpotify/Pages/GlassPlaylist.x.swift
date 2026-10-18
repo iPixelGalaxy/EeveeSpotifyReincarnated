@@ -44,7 +44,9 @@ enum GlassPlaylist {
 
     static func style(_ root: UIView) {
         if root.backgroundColor != .black { root.backgroundColor = .black }
-        guard let header = header(in: root) else { return }
+        let playlistHeader = header(in: root)
+        LandscapePlaylistHeader.layoutPage(root, list: list(in: root), header: playlistHeader)
+        guard let header = playlistHeader else { return }
         let options = Self.options
 
         if let container = header.eeveeFirst(UIView.self, where: { $0.accessibilityIdentifier == "_backgroundViewContainer" }) {
@@ -286,7 +288,13 @@ class GlassPlaylistHook: ClassHook<UIViewController> {
     func viewWillAppear(_ animated: Bool) {
         orig.viewWillAppear(animated)
         guard #available(iOS 26.0, *), let root = target.viewIfLoaded else { return }
+        LandscapePlaylistHeader.setVisible(root, true)
         root.layoutIfNeeded()
+    }
+
+    func viewWillDisappear(_ animated: Bool) {
+        if #available(iOS 26.0, *) { LandscapePlaylistHeader.setVisible(target.viewIfLoaded, false) }
+        orig.viewWillDisappear(animated)
     }
 
     // The cover loads after the first layout.
@@ -402,6 +410,7 @@ class PlaylistListHook: ClassHook<UIScrollView> {
     func layoutSubviews() {
         orig.layoutSubviews()
         guard #available(iOS 26.0, *) else { return }
+        LandscapePlaylistHeader.listDidLayout(target)
         PlaylistListPaint.meter.measure { PlaylistListPaint.clear(target) }
         GlassPlaylist.row(near: target)?.place()
     }

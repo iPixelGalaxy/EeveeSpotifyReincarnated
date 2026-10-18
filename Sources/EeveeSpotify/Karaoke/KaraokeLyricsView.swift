@@ -226,7 +226,7 @@ private struct KaraokeScrollingLines: View {
                         if options.pinnedFooterMode != .full {
                             KaraokeCreditsFooterView(lyrics: lyrics, showDetails: options.pinnedFooterMode == .off)
                                 .padding(.top, creditsTopPadding)
-                                .padding(.bottom, fontSize * 1.1)
+                                .padding(.bottom, options.pinnedFooterMode == .noWriters ? 0 : fontSize * 1.1)
                                 .background(GeometryReader { geometry in
                                     Color.clear.preference(key: KaraokeCreditsBottomKey.self,
                                         value: geometry.frame(in: .named("KaraokeLyricsScroll")).maxY)

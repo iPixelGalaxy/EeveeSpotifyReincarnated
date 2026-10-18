@@ -85,6 +85,10 @@ struct KaraokeLineDto {
     }
 }
 
+enum KaraokeTimingExperiment: Hashable {
+    case extraSplits, automaticSplitting, spaceGravity
+}
+
 struct KaraokeLyricsDto {
     var lines: [KaraokeLineDto]
 
@@ -110,7 +114,7 @@ struct KaraokeLyricsDto {
     var makerUrl: String? = nil
     var uploaderAvatarUrl: String? = nil
     var makerAvatarUrl: String? = nil
-    var hasExperimentalWordTiming = false
+    var timingExperiments = Set<KaraokeTimingExperiment>()
 }
 
 

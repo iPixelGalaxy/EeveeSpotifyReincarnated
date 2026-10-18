@@ -37,7 +37,10 @@ final class KaraokeLyricsViewModel: ObservableObject {
     }
 
     private func apply(_ lyrics: KaraokeLyricsDto?) {
-        let prepared = UserDefaults.karaokeOptions.wordSplittingEnabled ? lyrics?.splittingTimedWords() : lyrics
+        let options = UserDefaults.karaokeOptions
+        let prepared = options.wordSplittingEnabled
+            ? lyrics?.splittingTimedWords(forcedBySpaceGravity: options.spaceGravityMode && !options.experimentalWordSplitting)
+            : lyrics
         let displayLyrics = prepared?.addingInterludes()
         self.lyrics = displayLyrics
         let songIsRTL = displayLyrics?.isRTL ?? false

@@ -19,8 +19,9 @@ final class KaraokeOverlayPresenter {
     private static var landscapeSidebar: KaraokeLandscapeSidebar?
     private static var updatingFrame = false
     private static var wideClipping: [ObjectIdentifier: VideoState] = [:]
-    private static weak var wideHeader: UIView?
-    private static var wideHeaderTransform = CGAffineTransform.identity
+    private static weak var positionedHeader: UIView?
+    private static var headerBaseTransform = CGAffineTransform.identity
+    private static var changingHeaderFrame = false
     private static var isLandscape: Bool {
         guard let window = canvas?.window else { return false }
         return window.bounds.width > window.bounds.height
@@ -586,18 +587,32 @@ final class KaraokeOverlayPresenter {
         }
     }
 
-    private static func applyWideGeometry() {
+    static func beginNativeHeaderFrame(_ view: UIView) -> Bool {
+        guard isPresented, positionedHeader === view, !changingHeaderFrame else { return false }
+        changingHeaderFrame = true
+        // UIKit's frame setter must see the natural transform, not yesterday's offset.
+        if view.transform != headerBaseTransform { view.transform = headerBaseTransform }
+        return true
+    }
+
+    static func endNativeHeaderFrame() {
+        changingHeaderFrame = false
+        updateFrame()
+    }
+
+    private static func applyHeaderGeometry() {
         guard let canvas, let window = canvas.window else { return }
-        allowWideClipping(from: canvas)
-        if wideHeader !== header {
-            wideHeader?.transform = wideHeaderTransform
-            wideHeader = header
-            wideHeaderTransform = header?.transform ?? .identity
+        if positionedHeader !== header {
+            positionedHeader?.transform = headerBaseTransform
+            positionedHeader = header
+            headerBaseTransform = header?.transform ?? .identity
         }
         guard let header, let parent = header.superview, let box = unitFrame(header, in: window) else { return }
         allowWideClipping(from: parent)
-        let desired = window.bounds.minY + 8 + CGFloat(UserDefaults.karaokeOptions.landscapeHeaderOffset)
-        let correction = desired - box.minY
+        let options = UserDefaults.karaokeOptions
+        let offset = isLandscape ? options.landscapeHeaderOffset : options.portraitHeaderOffset
+        let top = isLandscape ? window.bounds.minY : window.safeAreaLayoutGuide.layoutFrame.minY
+        let correction = top + 8 + CGFloat(offset) - box.minY
         if abs(correction) > 0.25 {
             let origin = parent.convert(CGPoint.zero, from: window)
             let shifted = parent.convert(CGPoint(x: 0, y: correction), from: window)
@@ -605,9 +620,12 @@ final class KaraokeOverlayPresenter {
         }
     }
 
+    private static func restoreHeaderGeometry() {
+        positionedHeader?.transform = headerBaseTransform
+        positionedHeader = nil
+    }
+
     private static func restoreWideGeometry() {
-        wideHeader?.transform = wideHeaderTransform
-        wideHeader = nil
         let saved = wideClipping
         wideClipping.removeAll()
         for state in saved.values { state.view?.clipsToBounds = state.clips }
@@ -685,7 +703,8 @@ final class KaraokeOverlayPresenter {
         updatingFrame = true
         defer { updatingFrame = false }
         if !isLandscape { restoreLandscape(); restoreWideGeometry() }
-        if isLandscape { setFocused(false); applyWideGeometry() }
+        if isLandscape { setFocused(false); allowWideClipping(from: canvas) }
+        applyHeaderGeometry()
         refreshFocusGeometry()
         guard let canvas, let container, let hosting else { return }
         guard canvas.window != nil, let frame = lyricsFrame(in: canvas) else {
@@ -846,6 +865,7 @@ final class KaraokeOverlayPresenter {
         idleWork?.cancel()
         setFocused(false)
         restoreLandscape()
+        restoreHeaderGeometry()
         restoreWideGeometry()
         KaraokeRotation.update(controller: hosting?.parent, enabled: false)
         for saved in outerScrolls.values {

@@ -10,6 +10,12 @@ struct KaraokeCreditsFooterView: View {
         nonEmpty(lyrics.providerName) ?? nonEmpty(lyrics.providerCode).map { _ in SpicyLyricsRepository.providerName }
     }
 
+    private var experimentSuffix: String {
+        let extra = providerLabel == "Apple Music" && lyrics.timingExperiments.contains(.extraSplits)
+        return (extra ? "karaoke_extra_splits_suffix".localized : "")
+            + (lyrics.timingExperiments.contains(.automaticSplitting) ? "karaoke_automatic_splitting_suffix".localized : "")
+    }
+
     private func nonEmpty(_ value: String?) -> String? {
         guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else { return nil }
         return value
@@ -29,7 +35,7 @@ struct KaraokeCreditsFooterView: View {
             }
             if showDetails {
                 if let provider = providerLabel {
-                    Text("\("lyrics_provided_by".localized): \(provider)")
+                    Text("\("lyrics_provided_by".localized): \(provider)\(experimentSuffix)")
                         .font(.system(size: 19.5, weight: .semibold))
                         .foregroundColor(.white.opacity(0.5))
                         .fixedSize(horizontal: false, vertical: true)
@@ -41,8 +47,8 @@ struct KaraokeCreditsFooterView: View {
                     profile(nonEmpty(lyrics.makerName) == nil ? "lyrics_made_by".localized : "lyrics_uploaded_by".localized,
                             name: uploader, link: lyrics.uploaderUrl, avatar: lyrics.uploaderAvatarUrl)
                 }
-                if lyrics.hasExperimentalWordTiming {
-                    Text("karaoke_experimental_timing".localized)
+                if lyrics.timingExperiments.contains(.spaceGravity) {
+                    Text("karaoke_space_gravity_timing_notice".localized)
                         .font(.caption).foregroundColor(.white.opacity(0.5))
                 }
             }
