@@ -79,7 +79,7 @@ struct KaraokeLyricsView: View {
         if options.spaceGravityMode {
             KaraokeSpaceGravityView(lyrics: lyrics, layouts: layouts, options: options, size: size)
         } else {
-            TimelineView(.animation(minimumInterval: 1.0 / 120.0)) { _ in
+            TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { _ in
                 let currentMs = KaraokePlaybackTracker.shared.currentPositionMs() + Int(options.timingOffsetMs)
 
                 KaraokeScrollingLines(
@@ -167,6 +167,7 @@ private struct KaraokeScrollingLines: View {
                             distance: index - (activeLineIndex ?? 0),
                             isBrowsing: isBrowsing,
                             blurIntensity: options.blurIntensity,
+                            timingOffsetMs: Int(options.timingOffsetMs),
                             onSeek: {
                             guard KaraokePlaybackTracker.shared.seek(toMs: max(0, layout.startMs - Int(options.timingOffsetMs))) else {
                                 UINotificationFeedbackGenerator().notificationOccurred(.error)

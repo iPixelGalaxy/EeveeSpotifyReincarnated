@@ -31,6 +31,7 @@ struct KaraokeLineView: View {
     let distance: Int
     let isBrowsing: Bool
     let blurIntensity: Double
+    let timingOffsetMs: Int
 
     var onSeek: () -> Void
     @StateObject private var textCache = KaraokeTextPlanCache()
@@ -48,7 +49,7 @@ struct KaraokeLineView: View {
             } else {
                 let plan = textCache.plan(words: layout.words, width: availableWidth, fontSize: fontSize,
                                           alignment: alignment, rtl: layout.isRTL)
-                KaraokeShapedText(plan: plan, currentMs: currentMs, active: singing, onSeek: onSeek)
+                KaraokeShapedText(plan: plan, currentMs: currentMs, active: singing, timingOffsetMs: timingOffsetMs, onSeek: onSeek)
                     .frame(width: availableWidth, height: plan.height)
             }
         }

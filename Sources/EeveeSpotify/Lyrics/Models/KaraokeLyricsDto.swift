@@ -1,6 +1,6 @@
 import Foundation
 
-struct KaraokeSyllableDto {
+struct KaraokeSyllableDto: Equatable {
     var text: String
     var startMs: Int
     var endMs: Int
