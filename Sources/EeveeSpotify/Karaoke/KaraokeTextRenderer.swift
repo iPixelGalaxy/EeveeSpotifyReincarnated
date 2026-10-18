@@ -27,12 +27,14 @@ final class KaraokeTextPlan {
     let frame: CTFrame
     let height: CGFloat
     let fontSize: CGFloat
+    let rtl: Bool
     let text: String
     var segments: [Segment]
     var glyphs: [Glyph] = []
 
     init(words: [[KaraokeSyllableDto]], width: CGFloat, fontSize: CGFloat, alignment: HorizontalAlignment, rtl: Bool) {
         self.fontSize = fontSize
+        self.rtl = rtl
         var text = ""
         var segments: [Segment] = []
         for word in words {
@@ -49,7 +51,8 @@ final class KaraokeTextPlan {
         self.text = text
         self.segments = segments
         let style = NSMutableParagraphStyle()
-        style.alignment = alignment == .trailing ? .right : (alignment == .center ? .center : .left)
+        style.alignment = alignment == .center ? .center :
+            (alignment == .trailing ? (rtl ? .left : .right) : (rtl ? .right : .left))
         style.baseWritingDirection = rtl ? .rightToLeft : .leftToRight
         style.lineBreakMode = .byWordWrapping
         style.lineSpacing = fontSize * 0.23
@@ -171,7 +174,7 @@ final class KaraokeTextCanvas: UIView {
             for index in plan.segments.indices {
                 let part = plan.segments[index]
                 motions[index].update(currentMs: currentMs, startMs: part.timing.startMs, endMs: part.timing.endMs,
-                    letterCount: part.timing.endMs - part.timing.startMs >= 1000 ? part.glyphs.count : 0, active: true, stamp: stamp)
+                    letterCount: !plan.rtl && part.timing.endMs - part.timing.startMs >= 1000 ? part.glyphs.count : 0, active: true, stamp: stamp)
             }
         }
         if changed || active { setNeedsDisplay() }

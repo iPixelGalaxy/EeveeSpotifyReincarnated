@@ -100,7 +100,8 @@ final class KaraokeOverlayPresenter {
                 queue.append(contentsOf: view.subviews)
                 if let control = view as? UIControl, let window,
                    control.convert(control.bounds, to: window).midX < window.bounds.width * 0.25,
-                   control.bounds.width > 0, !control.isHidden { candidates.append(control) }
+                   control.bounds.width > 0, !control.isHidden, control.alpha > 0.01, control.isEnabled,
+                   !control.allControlEvents.isEmpty { candidates.append(control) }
             }
         }
         var modal = canvas?.next as? UIViewController
