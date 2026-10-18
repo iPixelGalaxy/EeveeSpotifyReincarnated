@@ -13,58 +13,23 @@ struct KaraokeCreditsFooterView: View {
         return value
     }
 
-    private func remoteURL(_ value: String?) -> URL? {
-        guard let value, let url = URL(string: value.hasPrefix("//") ? "https:" + value : value),
-              url.scheme == "https" else { return nil }
-        return url
-    }
-
     private func profile(_ label: String, name: String, link: String?, avatar: String?) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(label).font(.system(size: 12)).foregroundColor(.white.opacity(0.5))
-            HStack(spacing: 8) {
-                let username = name.hasPrefix("@") ? name : "@" + name
-                if let url = remoteURL(link) {
-                    Link(username, destination: url).foregroundColor(.white.opacity(0.9))
-                } else {
-                    Text(username).foregroundColor(.white.opacity(0.9))
-                }
-                if let url = remoteURL(avatar) {
-                    AsyncImage(url: url) { image in
-                        image.resizable().scaledToFill()
-                    } placeholder: {
-                        Image(systemName: "person.crop.circle.fill").foregroundColor(.white.opacity(0.3))
-                    }
-                    .frame(width: 24, height: 24)
-                    .clipShape(Circle())
-                    .accessibilityLabel(Text(name))
-                }
-            }
-            .font(.system(size: 15, weight: .semibold))
-        }
+        KaraokeContributorCredit(label: label, name: name, link: link, avatar: avatar)
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
+        VStack(alignment: .leading, spacing: 8) {
             if !lyrics.songWriters.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("lyrics_written_by".localized)
-                        .font(.system(size: 14, weight: .semibold))
-                    Text(lyrics.songWriters.joined(separator: ", "))
-                        .font(.system(size: 15))
-                }
-                .foregroundColor(.white.opacity(0.6))
-                .fixedSize(horizontal: false, vertical: true)
+                Text("\("lyrics_written_by".localized) \(lyrics.songWriters.joined(separator: ", "))")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.6))
+                    .fixedSize(horizontal: false, vertical: true)
             }
             if let provider = providerLabel {
-                HStack(spacing: 8) {
-                    if provider.localizedCaseInsensitiveContains("spicy") {
-                        Image(uiImage: SpicyLyricsBrand.image(size: 20)).accessibilityHidden(true)
-                    }
-                    Text("\("lyrics_provided_by".localized) \(provider)")
-                }
-                .font(.system(size: 13))
-                .foregroundColor(.white.opacity(0.5))
+                Text("\("lyrics_provided_by".localized): \(provider)")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.5))
+                    .fixedSize(horizontal: false, vertical: true)
             }
             if let maker = nonEmpty(lyrics.makerName) {
                 profile("lyrics_made_by".localized, name: maker, link: lyrics.makerUrl, avatar: lyrics.makerAvatarUrl)
@@ -75,8 +40,51 @@ struct KaraokeCreditsFooterView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 24)
-        .padding(.top, 24)
+        .padding(.horizontal, 20)
+        .padding(.top, 8)
         .padding(.bottom, 12)
+    }
+}
+
+
+@available(iOS 15.0, *)
+private struct KaraokeContributorCredit: View {
+    let label: String
+    let name: String
+    let link: String?
+    let avatar: String?
+    @State private var resolvedName: String?
+
+    private func remoteURL(_ value: String?) -> URL? {
+        guard let value, let url = URL(string: value.hasPrefix("//") ? "https:" + value : value),
+              url.scheme == "https" else { return nil }
+        return url
+    }
+
+    var body: some View {
+        let currentName = resolvedName ?? name
+        let username = currentName.hasPrefix("@") ? currentName : "@" + currentName
+        HStack(alignment: .firstTextBaseline, spacing: 5) {
+            Text(label).foregroundColor(.white.opacity(0.5))
+            if let url = remoteURL(link) {
+                Link(destination: url) { Text(username).fontWeight(.bold).underline() }
+                    .foregroundColor(.white.opacity(0.65))
+            } else {
+                Text(username).fontWeight(.bold).foregroundColor(.white.opacity(0.65))
+            }
+            if let url = remoteURL(avatar) {
+                AsyncImage(url: url) { image in image.resizable().scaledToFill() }
+                placeholder: { Color.clear }
+                    .frame(width: 20, height: 20)
+                    .clipShape(Circle())
+                    .alignmentGuide(.firstTextBaseline) { $0.height * 0.78 }
+                    .accessibilityLabel(Text(currentName))
+            }
+        }
+        .font(.system(size: 15, weight: .semibold))
+        .task(id: link) {
+            let updated = await KaraokeProfileResolver.shared.username(profileURL: link)
+            if !Task.isCancelled { resolvedName = updated }
+        }
     }
 }

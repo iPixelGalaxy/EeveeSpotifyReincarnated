@@ -3,6 +3,9 @@ import SwiftUI
 struct KaraokeLineLayout {
     let words: [[KaraokeSyllableDto]]
     let isRTL: Bool
+    let startMs: Int
+    let endMs: Int
+    let isInterlude: Bool
 }
 
 extension KaraokeTextAlignment {
@@ -28,9 +31,18 @@ struct KaraokeLineView: View {
     let blurIntensity: Double
 
     var body: some View {
-        KaraokeFlowLayout(spacing: fontSize * 0.23, alignment: alignment) {
-            ForEach(Array(layout.words.enumerated()), id: \.offset) { _, word in
-                KaraokeWordView(syllables: word, currentMs: currentMs, isActiveLine: isActiveLine, isRTL: layout.isRTL, fontSize: fontSize)
+        Group {
+            if layout.isInterlude {
+                KaraokeInterludeView(startMs: layout.startMs, endMs: layout.endMs,
+                                     currentMs: currentMs, fontSize: fontSize)
+                    .frame(maxWidth: .infinity, alignment: Alignment(horizontal: alignment, vertical: .center))
+            } else {
+                KaraokeFlowLayout(spacing: fontSize * 0.23, alignment: alignment) {
+                    ForEach(Array(layout.words.enumerated()), id: \.offset) { _, word in
+                        KaraokeWordView(syllables: word, currentMs: currentMs, isActiveLine: isActiveLine,
+                                        isRTL: layout.isRTL, fontSize: fontSize)
+                    }
+                }
             }
         }
         .frame(width: availableWidth)
@@ -125,5 +137,37 @@ private struct KaraokeLyricText: View {
                 .init(color: edge >= 1 ? bright : dim, location: right),
                 .init(color: edge >= 1 ? bright : dim, location: 1)
             ], startPoint: isRTL ? .trailing : .leading, endPoint: isRTL ? .leading : .trailing))
+    }
+}
+
+
+@available(iOS 15.0, *)
+private struct KaraokeInterludeView: View {
+    let startMs: Int
+    let endMs: Int
+    let currentMs: Int
+    let fontSize: CGFloat
+
+    private static let scale = KaraokeAnimationCurve(points: [(0, 0.75), (0.7, 1.05), (1, 1)])
+    private static let lift = KaraokeAnimationCurve(points: [(0, 0), (0.9, -0.12), (1, 0)])
+    private static let opacity = KaraokeAnimationCurve(points: [(0, 0.35), (0.6, 1), (1, 1)])
+
+    var body: some View {
+        let duration = Double(max(1, endMs - startMs)) / 3
+        HStack(spacing: fontSize * 0.22) {
+            ForEach(0..<3) { index in
+                let progress = min(1, max(0, (Double(currentMs - startMs) - Double(index) * duration) / duration))
+                Circle()
+                    .fill(Color.white)
+                    .frame(width: fontSize * 0.26, height: fontSize * 0.26)
+                    .scaleEffect(Self.scale.value(at: progress))
+                    .offset(y: fontSize * Self.lift.value(at: progress))
+                    .opacity(Self.opacity.value(at: progress))
+                    .shadow(color: .white.opacity(progress > 0 && progress < 1 ? 0.45 : 0), radius: 6)
+            }
+        }
+        .frame(height: fontSize * 1.25)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text("Instrumental break"))
     }
 }

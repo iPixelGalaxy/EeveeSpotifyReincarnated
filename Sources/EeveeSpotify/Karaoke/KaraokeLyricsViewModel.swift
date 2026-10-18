@@ -32,11 +32,13 @@ final class KaraokeLyricsViewModel: ObservableObject {
     }
 
     private func apply(_ lyrics: KaraokeLyricsDto?) {
-        self.lyrics = lyrics
-        let songIsRTL = lyrics?.isRTL ?? false
-        layouts = lyrics?.lines.map { line in
+        let displayLyrics = lyrics?.addingInterludes()
+        self.lyrics = displayLyrics
+        let songIsRTL = displayLyrics?.isRTL ?? false
+        layouts = displayLyrics?.lines.map { line in
             let direction = line.strongDirection
-            return KaraokeLineLayout(words: line.words, isRTL: direction.map { $0 == .rightToLeft } ?? songIsRTL)
+            return KaraokeLineLayout(words: line.words, isRTL: direction.map { $0 == .rightToLeft } ?? songIsRTL,
+                                     startMs: line.startMs, endMs: line.endMs, isInterlude: line.isInterlude)
         } ?? []
     }
 

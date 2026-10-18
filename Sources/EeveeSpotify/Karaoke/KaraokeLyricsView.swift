@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 @available(iOS 15.0, *)
 struct KaraokeLyricsView: View {
@@ -112,7 +113,7 @@ private struct KaraokeScrollingLines: View {
     @State private var resumeAt = Date.distantPast
 
     private var horizontalPadding: CGFloat { max(20, size.width * 0.05) }
-    private var fontSize: CGFloat { min(56, max(29.6, size.width * 0.07)) * 1.75 }
+    private var fontSize: CGFloat { min(36, max(28, size.width * 0.075)) }
     private var focus: UnitPoint { UnitPoint(x: 0.5, y: options.reversedDirection ? 0.75 : 0.25) }
 
     var body: some View {
@@ -136,6 +137,21 @@ private struct KaraokeScrollingLines: View {
                             isBrowsing: isBrowsing,
                             blurIntensity: options.blurIntensity
                         )
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            guard KaraokePlaybackTracker.shared.seek(toMs: layout.startMs) else {
+                                UINotificationFeedbackGenerator().notificationOccurred(.error)
+                                return
+                            }
+                            isBrowsing = false
+                            isDragging = false
+                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                            withAnimation(.easeOut(duration: 0.35)) {
+                                proxy.scrollTo(index, anchor: focus)
+                            }
+                        }
+                        .accessibilityAddTraits(.isButton)
+                        .accessibilityHint(Text("Seek to this lyric"))
                         .id(index)
                         .padding(.horizontal, horizontalPadding)
                         .scaleEffect(x: 1, y: flip)

@@ -27,10 +27,12 @@ class SpicyLyricsRepository: LyricsRepository {
     }
 
     private static func profileURL(_ profile: SpicyLyricsJSON?) -> String? {
+        if let id = profile?["id"]?.stringValue,
+           let encoded = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed), !encoded.isEmpty {
+            return "https://spicylyrics.org/uid/\(encoded)"
+        }
         if let url = profile?["url"]?.stringValue, URL(string: url)?.scheme == "https" { return url }
-        guard let id = profile?["id"]?.stringValue,
-              let encoded = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) else { return nil }
-        return "https://spicylyrics.org/uid/\(encoded)"
+        return nil
     }
 
     // MARK: - Network
@@ -143,6 +145,13 @@ class SpicyLyricsRepository: LyricsRepository {
         var hasRomanized = root["HasTransliterations"]?.boolValue ?? false
 
         for entry in content {
+            if entry["Type"]?.stringValue == "Interlude" {
+                if let start = entry["StartTime"]?.doubleValue, let end = entry["EndTime"]?.doubleValue, end > start {
+                    karaokeLines.append(KaraokeLineDto(syllables: [], startMs: Int(start * 1000),
+                                                      endMs: Int(end * 1000), isInterlude: true))
+                }
+                continue
+            }
             guard entry["Type"]?.stringValue == "Vocal",
                   let lead = entry["Lead"] else { continue }
 
@@ -201,7 +210,7 @@ class SpicyLyricsRepository: LyricsRepository {
                     lines: normalizedKaraokeLines,
                     songWriters: songWriters,
                     providerCode: root["source"]?.stringValue,
-                    providerName: Self.providerName,
+                    providerName: Self.creditProviderName(root),
                     uploaderName: Self.profileName(attribution?["Uploader"]),
                     uploaderUrl: Self.profileURL(attribution?["Uploader"]),
                     makerName: Self.profileName(attribution?["Maker"]),
@@ -250,6 +259,13 @@ class SpicyLyricsRepository: LyricsRepository {
         let hasRomanized = root["HasTransliterations"]?.boolValue ?? false
 
         for entry in content {
+            if entry["Type"]?.stringValue == "Interlude" {
+                if let start = entry["StartTime"]?.doubleValue, let end = entry["EndTime"]?.doubleValue, end > start {
+                    karaokeLines.append(KaraokeLineDto(syllables: [], startMs: Int(start * 1000),
+                                                      endMs: Int(end * 1000), isInterlude: true))
+                }
+                continue
+            }
             guard entry["Type"]?.stringValue == "Vocal" else { continue }
             let text      = SpicyLyricsRepository.leadText(entry)
             let startTime = entry["Lead"]?["StartTime"]?.doubleValue ?? entry["StartTime"]?.doubleValue
@@ -291,7 +307,7 @@ class SpicyLyricsRepository: LyricsRepository {
                     lines: SpicyLyricsRepository.normalizeMonotonicTiming(filledKaraokeLines),
                     songWriters: root["SongWriters"]?.arrayValue?.compactMap { $0.stringValue } ?? [],
                     providerCode: root["source"]?.stringValue,
-                    providerName: Self.providerName,
+                    providerName: Self.creditProviderName(root),
                     uploaderName: Self.profileName(attribution?["Uploader"]),
                     uploaderUrl: Self.profileURL(attribution?["Uploader"]),
                     makerName: Self.profileName(attribution?["Maker"]),
@@ -359,6 +375,13 @@ class SpicyLyricsRepository: LyricsRepository {
     // MARK: Attribution
 
     static let providerName = "Spicy Lyrics"
+
+    private static func creditProviderName(_ root: SpicyLyricsJSON) -> String {
+        if root["source"]?.stringValue == "spicy_lyrics" || root["TTMLUploadMetadata"] != nil || root["UploadAttribution"] != nil {
+            return "Spicy Lyrics Community"
+        }
+        return providerName
+    }
 
     private static func providerCredit(_ root: SpicyLyricsJSON) -> String? {
         guard let code = root["source"]?.stringValue, !code.isEmpty else { return nil }

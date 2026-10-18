@@ -32,6 +32,7 @@ struct KaraokeLineDto {
     var syllables: [KaraokeSyllableDto]
     var startMs: Int
     var endMs: Int
+    var isInterlude = false
 
     var plainText: String { syllables.plainText }
 
@@ -106,4 +107,27 @@ struct KaraokeLyricsDto {
     var makerUrl: String? = nil
     var uploaderAvatarUrl: String? = nil
     var makerAvatarUrl: String? = nil
+}
+
+
+extension KaraokeLyricsDto {
+    /// Match Spicy's default three-second intro/instrumental-gap threshold.
+    func addingInterludes() -> KaraokeLyricsDto {
+        var result = self
+        var display = [KaraokeLineDto]()
+        var previousEnd = 0
+        let ordered = lines.sorted(by: { $0.startMs < $1.startMs })
+        for (index, line) in ordered.enumerated() {
+            if !line.isInterlude, line.startMs - previousEnd >= 3000 {
+                display.append(KaraokeLineDto(syllables: [], startMs: previousEnd,
+                                              endMs: line.startMs, isInterlude: true))
+            }
+            display.append(line)
+            // Unknown line duration must not turn the entire lyric into an instrumental break.
+            let nextStart = index + 1 < ordered.count ? ordered[index + 1].startMs : line.startMs
+            previousEnd = max(previousEnd, line.endMs > line.startMs ? line.endMs : nextStart)
+        }
+        result.lines = display
+        return result
+    }
 }

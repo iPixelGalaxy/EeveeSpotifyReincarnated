@@ -167,3 +167,15 @@ func activateKaraokeHooks() {
 
     activateKaraokeFooterButton()
 }
+
+
+class KaraokeSeekControllerHook: ClassHook<NSObject> {
+    typealias Group = KaraokeGroup
+    static let targetName = "SPTNowPlayingPlaybackControllerImplementation"
+
+    func initWithPlayer(_ player: AnyObject?, testManager: AnyObject?, inStreamClient: AnyObject?) -> Target {
+        let controller = orig.initWithPlayer(player, testManager: testManager, inStreamClient: inStreamClient)
+        KaraokePlaybackTracker.shared.attachPlaybackController(controller)
+        return controller
+    }
+}

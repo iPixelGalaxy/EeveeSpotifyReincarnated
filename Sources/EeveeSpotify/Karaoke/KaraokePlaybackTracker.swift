@@ -1,6 +1,12 @@
 import Foundation
 import ObjectiveC.runtime
 
+@objc private protocol KaraokeSeeking {
+    func seekForwardBySeconds(_ seconds: Double)
+    func seekBackwardBySeconds(_ seconds: Double)
+    var seekingAllowed: Bool { get }
+}
+
 /// Tracks live playback position and the current track's Spotify ID, for the
 /// karaoke overlay's animation loop.
 ///
@@ -22,6 +28,7 @@ final class KaraokePlaybackTracker {
     private var observedTrackId: String?
 
     private var didDumpStateShape = false
+    private weak var playbackController: NSObject?
 
     private init() {}
 
@@ -115,6 +122,33 @@ final class KaraokePlaybackTracker {
             self.lastTrackId = trackId
             KaraokeLyricsStore.shared.notify()
         }
+    }
+
+    func attachPlaybackController(_ controller: NSObject) {
+        playbackController = controller
+    }
+
+    /// Use Spotify's own transport controller, independently of gesture/SponsorBlock settings.
+    @discardableResult
+    func seek(toMs milliseconds: Int) -> Bool {
+        guard let controller = playbackController,
+              controller.responds(to: NSSelectorFromString("seekForwardBySeconds:")),
+              controller.responds(to: NSSelectorFromString("seekBackwardBySeconds:")) else {
+            writeDebugLog("[Karaoke] tap seek unavailable: playback controller missing")
+            return false
+        }
+        let player = unsafeBitCast(controller, to: KaraokeSeeking.self)
+        if controller.responds(to: NSSelectorFromString("seekingAllowed")), !player.seekingAllowed { return false }
+        let target = max(0, milliseconds)
+        let delta = Double(target - currentPositionMs()) / 1000
+        if delta >= 0 { player.seekForwardBySeconds(delta) }
+        else { player.seekBackwardBySeconds(-delta) }
+        queue.async {
+            self.lastPosition = Double(target) / 1000
+            self.lastPositionStamp = self.uptimeSec()
+        }
+        writeDebugLog("[Karaoke] tap seek to \(target)ms")
+        return true
     }
 
     /// Estimated current playback position in milliseconds, interpolated

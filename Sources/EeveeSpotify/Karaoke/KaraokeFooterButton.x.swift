@@ -35,7 +35,7 @@ enum KaraokeFooterButton {
         ])
         button.overrideUserInterfaceStyle = .dark
         button.accessibilityLabel = "karaoke_word_synced_button".localized
-        button.addAction(UIAction { _ in KaraokeOverlayPresenter.present() }, for: .primaryActionTriggered)
+        button.addAction(UIAction { _ in KaraokeOverlayPresenter.toggle() }, for: .primaryActionTriggered)
         return button
     }()
 
@@ -61,6 +61,17 @@ enum KaraokeFooterButton {
     }
 
     private static func update() {
+        let enabled = KaraokeOverlayPresenter.isEnabled
+        let color = enabled ? UIColor(red: 30 / 255, green: 215 / 255, blue: 96 / 255, alpha: 1)
+            : UIColor(white: 1, alpha: 0.85)
+        if var config = button.configuration, config.baseForegroundColor != color {
+            config.baseForegroundColor = color
+            button.configuration = config
+        }
+        button.tintColor = color
+        button.isSelected = enabled
+        button.accessibilityValue = (enabled ? "karaoke_state_enabled" : "karaoke_state_disabled").localized
+        KaraokeOverlayPresenter.restoreIfNeeded()
         let tracker = KaraokePlaybackTracker.shared
         let unavailable = !UserDefaults.karaokeOptions.enabled
             || !UserDefaults.lyricsSource.supportsCustomLyricsView

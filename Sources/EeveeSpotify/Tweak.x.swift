@@ -240,6 +240,11 @@ struct EeveeSpotify: Tweak {
         activateArtistHides()
         activatePlaylistHides()
         HideJam.activate()
+        if UserDefaults.karaokeOptions.enabled {
+            RemoteFlags.shared.force([
+                "ios-feature-nowplaying-modes.martini_chat_pill_enabled": false
+            ], by: "LyricsPlayer")
+        }
         activateRemoteFlags()
         activateRatingPromptBlock()
 

@@ -537,3 +537,6 @@ restart_later = "Later";
 "karaoke_loading" = "Loading lyrics…";
 "karaoke_loading_failed" = "Timed lyrics could not be loaded for this track. Try again or choose another lyrics source.";
 "karaoke_retry" = "Try again";
+
+"karaoke_state_enabled" = "Lyrics enabled";
+"karaoke_state_disabled" = "Lyrics disabled";
