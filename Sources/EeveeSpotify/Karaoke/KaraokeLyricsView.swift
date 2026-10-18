@@ -74,18 +74,23 @@ struct KaraokeLyricsView: View {
         }
     }
 
+    @ViewBuilder
     private func content(lyrics: KaraokeLyricsDto, layouts: [KaraokeLineLayout], size: CGSize) -> some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 120.0)) { _ in
-            let currentMs = KaraokePlaybackTracker.shared.currentPositionMs() + Int(options.timingOffsetMs)
+        if options.spaceGravityMode {
+            KaraokeSpaceGravityView(lyrics: lyrics, layouts: layouts, options: options, size: size)
+        } else {
+            TimelineView(.animation(minimumInterval: 1.0 / 120.0)) { _ in
+                let currentMs = KaraokePlaybackTracker.shared.currentPositionMs() + Int(options.timingOffsetMs)
 
-            KaraokeScrollingLines(
-                lyrics: lyrics,
-                layouts: layouts,
-                options: options,
-                currentMs: currentMs,
-                activeLineIndex: activeLineIndex(in: lyrics, at: currentMs),
-                size: size
-            )
+                KaraokeScrollingLines(
+                    lyrics: lyrics,
+                    layouts: layouts,
+                    options: options,
+                    currentMs: currentMs,
+                    activeLineIndex: activeLineIndex(in: lyrics, at: currentMs),
+                    size: size
+                )
+            }
         }
     }
 

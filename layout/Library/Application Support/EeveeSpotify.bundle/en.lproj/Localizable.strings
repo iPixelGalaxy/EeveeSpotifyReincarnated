@@ -557,3 +557,6 @@ restart_later = "Later";
 
 "karaoke_text_scale" = "Lyric text scale";
 "karaoke_text_scale_reset" = "Reset to 100%";
+
+"karaoke_space_gravity" = "Space Gravity";
+"karaoke_space_gravity_help" = "Float lyric words through space. Shake or turn your phone to move them. Motion pauses with Reduce Motion or VoiceOver enabled.";

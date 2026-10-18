@@ -22,3 +22,8 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+Space Gravity physics adapted from src/utils/Lyrics/SpaceGravity.ts and
+src/css/Lyrics/main.css at the same reference commit (AGPL-3.0).
+Native implementation: KaraokeSpaceGravityView.swift and KaraokeSpaceMotion.swift.
+Phone acceleration replaces desktop window-motion impulses.

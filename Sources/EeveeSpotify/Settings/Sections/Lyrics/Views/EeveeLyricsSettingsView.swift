@@ -52,6 +52,10 @@ struct EeveeLyricsSettingsView: View {
             Toggle("allow_screen_recording".localized, isOn: $karaokeOptions.allowScreenRecording)
 
             if karaokeOptions.enabled {
+                Toggle("karaoke_space_gravity".localized, isOn: $karaokeOptions.spaceGravityMode)
+                if karaokeOptions.spaceGravityMode {
+                    Text("karaoke_space_gravity_help".localized).font(.caption).foregroundColor(.gray)
+                }
                 Picker("karaoke_alignment".localized, selection: $karaokeOptions.textAlignment) {
                     ForEach(KaraokeTextAlignment.allCases, id: \.self) { alignment in
                         Text(alignment.displayName).tag(alignment)

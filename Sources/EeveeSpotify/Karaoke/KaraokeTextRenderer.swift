@@ -29,10 +29,12 @@ final class KaraokeTextPlan {
     let fontSize: CGFloat
     let rtl: Bool
     let text: String
+    let inkColor: UIColor
     var segments: [Segment]
     var glyphs: [Glyph] = []
 
-    init(words: [[KaraokeSyllableDto]], width: CGFloat, fontSize: CGFloat, alignment: HorizontalAlignment, rtl: Bool) {
+    init(words: [[KaraokeSyllableDto]], width: CGFloat, fontSize: CGFloat, alignment: HorizontalAlignment, rtl: Bool, inkColor: UIColor = .white) {
+        self.inkColor = inkColor
         self.fontSize = fontSize
         self.rtl = rtl
         var text = ""
@@ -58,7 +60,7 @@ final class KaraokeTextPlan {
         style.lineSpacing = fontSize * 0.23
         let attributed = NSAttributedString(string: text, attributes: [
             .font: UIFont.systemFont(ofSize: fontSize, weight: .bold),
-            .foregroundColor: UIColor.white, .paragraphStyle: style
+            .foregroundColor: inkColor, .paragraphStyle: style
         ])
         let setter = CTFramesetterCreateWithAttributedString(attributed)
         let fitting = CTFramesetterSuggestFrameSizeWithConstraints(setter, CFRange(location: 0, length: 0), nil,
@@ -220,14 +222,14 @@ final class KaraokeTextCanvas: UIView {
             context.concatenate(matrix)
             if let path = glyph.path {
                 if sample.glow > 0.01 {
-                    context.setShadow(offset: .zero, blur: CGFloat(4 + 10 * sample.glow), color: UIColor.white.withAlphaComponent(min(0.55, sample.glow * 0.55)).cgColor)
-                    context.setFillColor(UIColor.white.withAlphaComponent(0.3).cgColor)
+                    context.setShadow(offset: .zero, blur: CGFloat(4 + 10 * sample.glow), color: plan.inkColor.withAlphaComponent(min(0.55, sample.glow * 0.55)).cgColor)
+                    context.setFillColor(plan.inkColor.withAlphaComponent(0.3).cgColor)
                     context.addPath(path); context.fillPath()
                     context.setShadow(offset: .zero, blur: 0, color: nil)
                 }
                 context.addPath(path); context.clip()
-                let dim = UIColor.white.withAlphaComponent(0.50).cgColor
-                let bright = UIColor.white.withAlphaComponent(0.95).cgColor
+                let dim = plan.inkColor.withAlphaComponent(0.50).cgColor
+                let bright = plan.inkColor.withAlphaComponent(0.95).cgColor
                 let colors = [edge <= 0 ? dim : bright, edge <= 0 ? dim : bright, edge >= 1 ? bright : dim, edge >= 1 ? bright : dim]
                 let locations: [CGFloat] = [0, max(0, min(1, edge - 0.1)), max(0, min(1, edge + 0.1)), 1]
                 if let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: colors as CFArray, locations: locations) {
@@ -238,7 +240,7 @@ final class KaraokeTextCanvas: UIView {
             } else {
                 var value = glyph.value
                 var zero = CGPoint.zero
-                context.setFillColor(UIColor.white.withAlphaComponent(progress > 0 ? 0.95 : 0.5).cgColor)
+                context.setFillColor(plan.inkColor.withAlphaComponent(progress > 0 ? 0.95 : 0.5).cgColor)
                 CTFontDrawGlyphs(glyph.font, &value, &zero, 1, context)
             }
             context.restoreGState()

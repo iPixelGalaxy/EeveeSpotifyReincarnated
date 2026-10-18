@@ -21,6 +21,7 @@ struct KaraokeOptions: Codable, Hashable {
     var textScale: Double = 1
     var timingOffsetMs: Double = 0
     var allowScreenRecording = true
+    var spaceGravityMode = false
 
     init(textAlignment: KaraokeTextAlignment = .automatic, reversedDirection: Bool = false, enabled: Bool = true, blurIntensity: Double = 1.5, textScale: Double = 1) {
         self.textAlignment = textAlignment
@@ -31,7 +32,7 @@ struct KaraokeOptions: Codable, Hashable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case textAlignment, reversedDirection, enabled, blurIntensity, timingOffsetMs, allowScreenRecording, textScale, textScaleVersion
+        case textAlignment, reversedDirection, enabled, blurIntensity, timingOffsetMs, allowScreenRecording, textScale, textScaleVersion, spaceGravityMode
     }
 
     // Settings saved before these fields existed must keep decoding.
@@ -50,5 +51,6 @@ struct KaraokeOptions: Codable, Hashable {
         textScale = min(1.3, max(0.7, normalizedScale))
         timingOffsetMs = try container.decodeIfPresent(Double.self, forKey: .timingOffsetMs) ?? 0
         allowScreenRecording = try container.decodeIfPresent(Bool.self, forKey: .allowScreenRecording) ?? true
+        spaceGravityMode = try container.decodeIfPresent(Bool.self, forKey: .spaceGravityMode) ?? false
     }
 }
