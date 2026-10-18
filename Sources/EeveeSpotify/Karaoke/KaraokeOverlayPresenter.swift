@@ -24,6 +24,7 @@ final class KaraokeOverlayPresenter {
         if isPresented && isEnabled && !focused { interact() }
     }
     private static var focused = false
+    private static var dismissing = false
     private static var focusShift: CGFloat = 0
     private struct NativeState {
         weak var view: UIView?
@@ -226,6 +227,7 @@ final class KaraokeOverlayPresenter {
     }
 
     private static func show() -> Bool {
+        dismissing = false
         _ = activityObserver
         if isPresented {
             container?.layer.removeAllAnimations()
@@ -268,16 +270,22 @@ final class KaraokeOverlayPresenter {
     }
 
     static func dismiss() {
+        guard !dismissing else { return }
+        dismissing = true
         setEnabled(false)
         idleWork?.cancel()
         setFocused(false)
         guard let container else { removeHosting(); return }
         UIView.animate(withDuration: 0.2, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction]) {
             container.alpha = 0
-        } completion: { _ in if !isEnabled { removeHosting() } }
+        } completion: { finished in
+            dismissing = false
+            if finished && !isEnabled { removeHosting() }
+        }
     }
 
     private static func removeHosting() {
+        dismissing = false
         idleWork?.cancel()
         setFocused(false)
         guard let hosting else { return }
