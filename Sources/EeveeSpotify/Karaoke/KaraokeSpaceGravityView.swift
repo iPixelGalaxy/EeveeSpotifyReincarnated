@@ -72,6 +72,7 @@ private final class KaraokeGravityField: UIView, UIGestureRecognizerDelegate {
         var scale: CGFloat = 1
         var radius: CGFloat
         var bounces = 0
+        var flingUntil: TimeInterval = 0
         var role: Role?
         var roleOpacity: CGFloat = 0
         let born: TimeInterval
@@ -242,14 +243,23 @@ private final class KaraokeGravityField: UIView, UIGestureRecognizerDelegate {
         } else {
             KaraokeSpaceMotion.shared.start(for: self)
             let sample = KaraokeSpaceMotion.shared.sample(for: self, delta: delta)
+            for body in active {
+                let radial = CGVector(dx: body.position.x - bounds.midX, dy: body.position.y - bounds.midY)
+                let distance = max(48, hypot(radial.dx, radial.dy))
+                body.velocity.dx += sample.impulse.dx + radial.dx / distance * sample.depthImpulse
+                body.velocity.dy += sample.impulse.dy + radial.dy / distance * sample.depthImpulse
+                if hypot(sample.impulse.dx, sample.impulse.dy) + abs(sample.depthImpulse) > 20 {
+                    body.flingUntil = stamp + 3
+                }
+            }
             var remaining = delta
             while remaining > 0 {
                 let step = min(0.05, remaining)
                 remaining -= step
                 separate(active, delta: step)
                 for body in active {
-                    body.velocity.dx -= sample.acceleration.dx * 900 * 1.1 * step
-                    body.velocity.dy -= sample.acceleration.dy * 900 * 1.1 * step
+                    body.velocity.dx += sample.acceleration.dx * 900 * 1.1 * step
+                    body.velocity.dy += sample.acceleration.dy * 900 * 1.1 * step
                     let radial = CGVector(dx: body.position.x - bounds.midX, dy: body.position.y - bounds.midY)
                     let distance = max(48, hypot(radial.dx, radial.dy))
                     body.velocity.dx += radial.dx / distance * sample.depth * 600 * step
@@ -258,7 +268,8 @@ private final class KaraokeGravityField: UIView, UIGestureRecognizerDelegate {
                     let speed = hypot(body.velocity.dx, body.velocity.dy)
                     let maximum: CGFloat = 16 * body.speedMultiplier
                     if speed > maximum {
-                        let next = min(240, maximum + (speed - maximum) * exp(-0.6 * step))
+                        let drag: CGFloat = body.flingUntil > stamp ? 0.16 : 0.6
+                        let next = min(1800, maximum + (speed - maximum) * exp(-drag * step))
                         body.velocity.dx *= next / speed; body.velocity.dy *= next / speed
                     }
                     body.velocity.dy -= 0.4 * max(0, (body.position.y / bounds.height - 0.45) / 0.55) * step
@@ -443,9 +454,11 @@ private final class KaraokeGravityField: UIView, UIGestureRecognizerDelegate {
         }
         let left = 18 + radius, right = max(left, bounds.width - 18 - radius)
         let top = 18 + radius, bottom = max(top, bounds.height - 18 - radius)
-        if body.position.x < left { body.position.x = left; bounce(body, horizontal: true, direction: 1) }
+        if right - left < 1 { body.position.x = (left + right) / 2; body.velocity.dx = 0 }
+        else if body.position.x < left { body.position.x = left; bounce(body, horizontal: true, direction: 1) }
         else if body.position.x > right { body.position.x = right; bounce(body, horizontal: true, direction: -1) }
-        if body.position.y < top { body.position.y = top; bounce(body, horizontal: false, direction: 1) }
+        if bottom - top < 1 { body.position.y = (top + bottom) / 2; body.velocity.dy = 0 }
+        else if body.position.y < top { body.position.y = top; bounce(body, horizontal: false, direction: 1) }
         else if body.position.y > bottom { body.position.y = bottom; bounce(body, horizontal: false, direction: -1) }
     }
 
@@ -454,7 +467,9 @@ private final class KaraokeGravityField: UIView, UIGestureRecognizerDelegate {
         guard velocity * direction < 0 else { return }
         let strength = 0.82 + pow(gravityRandom(body.seed &+ UInt32(truncatingIfNeeded: body.bounces)), 2) * (2.4 - 0.82)
         body.bounces &+= 1
-        let rebound = direction * min(16 * 2.4 * body.speedMultiplier, abs(velocity) * strength)
+        let flick = body.flingUntil > (lastStamp ?? 0)
+        let rebound = direction * (flick ? min(1800, abs(velocity) * 0.985)
+            : min(16 * 2.4 * body.speedMultiplier, abs(velocity) * strength))
         if horizontal { body.velocity.dx = rebound } else { body.velocity.dy = rebound }
     }
 
