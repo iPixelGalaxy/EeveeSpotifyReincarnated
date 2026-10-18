@@ -7,6 +7,8 @@ final class KaraokeTextPlan {
     struct Segment {
         let range: NSRange
         let timing: KaraokeSyllableDto
+        let wordStartMs: Int
+        let wordEndMs: Int
         var glyphs: [Int] = []
         var bounds = CGRect.null
     }
@@ -45,23 +47,28 @@ final class KaraokeTextPlan {
     let text: String
     let inkColor: UIColor
     let baseInk: CGColor
-    let dimInk: CGColor
-    let brightInk: CGColor
-    let glowInk: CGColor
-    let highlightGradient: CGGradient?
-    private static let gradientSpace = CGColorSpaceCreateDeviceRGB()
+    let fillInks: [CGColor]
+    let glowInks: [CGColor]
+    let startMs: Int
+    let endMs: Int
     var segments: [Segment]
     var glyphs: [Glyph] = []
 
-    init(words: [[KaraokeSyllableDto]], width: CGFloat, fontSize: CGFloat, alignment: HorizontalAlignment, rtl: Bool, inkColor: UIColor = .white) {
+    init(words: [[KaraokeSyllableDto]], width: CGFloat, fontSize: CGFloat, alignment: HorizontalAlignment, rtl: Bool, inkColor: UIColor = .white,
+         timingRange: ClosedRange<Int>? = nil, isInterlude: Bool = false) {
         self.inkColor = inkColor
         baseInk = inkColor.cgColor
-        let dim = inkColor.withAlphaComponent(0.50).cgColor
-        let bright = inkColor.withAlphaComponent(0.95).cgColor
-        dimInk = dim
-        brightInk = bright
-        glowInk = inkColor.withAlphaComponent(0.3).cgColor
-        highlightGradient = CGGradient(colorsSpace: Self.gradientSpace, colors: [bright, dim] as CFArray, locations: [0, 1])
+        let dotOpacity = KaraokeAnimationCurve(points: [(0, 0.35), (0.6, 1), (1, 1)])
+        fillInks = (0...64).map {
+            let progress = Double($0) / 64
+            return inkColor.withAlphaComponent(CGFloat(isInterlude ? dotOpacity.value(at: progress) : 0.5 + 0.45 * progress)).cgColor
+        }
+        glowInks = (0...64).map { inkColor.withAlphaComponent(CGFloat($0) / 64 * 0.55).cgColor }
+        let all = words.flatMap { $0 }
+        let lineStart = timingRange?.lowerBound ?? all.map(\.startMs).min() ?? 0
+        let lineEnd = max(lineStart + 1, timingRange?.upperBound ?? all.map(\.endMs).max() ?? lineStart + 1)
+        startMs = lineStart
+        endMs = lineEnd
         self.fontSize = fontSize
         self.layoutWidth = width
         self.rtl = rtl
@@ -70,12 +77,16 @@ final class KaraokeTextPlan {
         for word in words {
             let parts = word.filter { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
             guard !parts.isEmpty else { continue }
+            let wordStart = parts.map(\.startMs).min() ?? lineStart
+            let rawEnd = parts.map(\.endMs).max() ?? wordStart
+            // Instantaneous words from line-only sources share the line's glow envelope.
+            let wordEnd = rawEnd <= wordStart && wordStart == lineStart ? lineEnd : max(wordStart + 1, rawEnd)
             if !text.isEmpty { text += " " }
             for part in parts {
                 let fragment = part.text.trimmingCharacters(in: .whitespacesAndNewlines)
                 let range = NSRange(location: text.utf16.count, length: fragment.utf16.count)
                 text += fragment
-                segments.append(Segment(range: range, timing: part))
+                segments.append(Segment(range: range, timing: part, wordStartMs: wordStart, wordEndMs: wordEnd))
             }
         }
         self.text = text
@@ -159,13 +170,15 @@ final class KaraokeTextPlanCache: ObservableObject {
         let fontRevision: Int
         let alignment: HorizontalAlignment
         let rtl: Bool
+        let timingRange: ClosedRange<Int>?
     }
     private var key: Key?
     private var stored: KaraokeTextPlan?
-    func plan(words: [[KaraokeSyllableDto]], width: CGFloat, fontSize: CGFloat, alignment: HorizontalAlignment, rtl: Bool) -> KaraokeTextPlan {
-        let next = Key(words: words, width: width, fontSize: fontSize, fontRevision: KaraokeFont.shared.revision, alignment: alignment, rtl: rtl)
+    func plan(words: [[KaraokeSyllableDto]], width: CGFloat, fontSize: CGFloat, alignment: HorizontalAlignment, rtl: Bool,
+              timingRange: ClosedRange<Int>? = nil) -> KaraokeTextPlan {
+        let next = Key(words: words, width: width, fontSize: fontSize, fontRevision: KaraokeFont.shared.revision, alignment: alignment, rtl: rtl, timingRange: timingRange)
         if key == next, let stored { return stored }
-        let plan = KaraokeTextPlan(words: words, width: width, fontSize: fontSize, alignment: alignment, rtl: rtl)
+        let plan = KaraokeTextPlan(words: words, width: width, fontSize: fontSize, alignment: alignment, rtl: rtl, timingRange: timingRange)
         key = next
         stored = plan
         return plan
@@ -196,7 +209,7 @@ final class KaraokeTextCanvas: UIView {
     private let haloLayer = CALayer()
     private var halo = KaraokeSpring(position: 0, frequency: 1, damping: 0.5)
     private var haloStamp: TimeInterval?
-    private static let haloCurve = KaraokeAnimationCurve(points: [(0, 0), (0.5, 1), (1, 0)])
+    private static let haloCurve = KaraokeAnimationCurve(points: [(0, 0), (1, 1)])
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -254,8 +267,8 @@ final class KaraokeTextCanvas: UIView {
         guard let plan else { return }
         let stamp = ProcessInfo.processInfo.systemUptime
         let dt = min(0.05, max(0, stamp - (haloStamp ?? stamp)))
-        let start = plan.segments.first?.timing.startMs ?? 0
-        let end = plan.segments.last?.timing.endMs ?? start + 1
+        let start = plan.startMs
+        let end = plan.endMs
         let progress = min(1, max(0, Double(position - start) / Double(max(1, end - start))))
         let glow = active ? Self.haloCurve.value(at: progress) : 0
         _ = halo.step(goal: glow, dt: dt, snap: seek || haloStamp == nil || UIAccessibility.isReduceMotionEnabled)
@@ -361,34 +374,24 @@ final class KaraokeTextCanvas: UIView {
         if !renderingMotion { CTFrameDraw(plan.frame, context); context.restoreGState(); return }
         for glyph in plan.glyphs {
             let part = plan.segments[glyph.segment]
-            let progress = min(1, max(0, Double(currentMs - part.timing.startMs) / Double(max(1, part.timing.endMs - part.timing.startMs))))
-            let local = (CGFloat(progress) - glyph.fraction) / glyph.share
-            let edge = min(1.2, max(-0.2, local))
-            let (matrix, sample) = transform(for: glyph, in: plan)
+            let progress = min(1, max(0, Double(currentMs - part.wordStartMs) / Double(max(1, part.wordEndMs - part.wordStartMs))))
+            let glow = currentMs < part.wordStartMs ? 0 : (currentMs <= part.wordEndMs ? progress : max(0, 1 - Double(currentMs - part.wordEndMs) / 350))
+            let fill = plan.fillInks[min(64, max(0, Int(progress * 64)))]
+            let (matrix, _) = transform(for: glyph, in: plan)
             context.saveGState()
             context.concatenate(matrix)
+            if glow > 0.01 {
+                context.setShadow(offset: .zero, blur: CGFloat(4 + 10 * glow), color: plan.glowInks[min(64, max(0, Int(glow * 64)))])
+            }
             if let path = glyph.path {
-                if sample.glow > 0.01 {
-                    context.setShadow(offset: .zero, blur: CGFloat(4 + 10 * sample.glow), color: plan.inkColor.withAlphaComponent(min(0.55, sample.glow * 0.55)).cgColor)
-                    context.setFillColor(plan.glowInk)
-                    context.addPath(path); context.fillPath()
-                    context.setShadow(offset: .zero, blur: 0, color: nil)
-                }
-                context.addPath(path); context.clip()
-                if !active || edge <= 0 || edge >= 1 {
-                    context.setFillColor(!active ? plan.baseInk : (edge <= 0 ? plan.dimInk : plan.brightInk))
-                    context.fill(glyph.bounds.insetBy(dx: -1, dy: -1))
-                } else if let gradient = plan.highlightGradient {
-                    let origin = glyph.rtl ? glyph.bounds.maxX : glyph.bounds.minX
-                    let span = glyph.rtl ? -glyph.bounds.width : glyph.bounds.width
-                    let start = CGPoint(x: origin + span * CGFloat(max(0, edge - 0.1)), y: 0)
-                    let end = CGPoint(x: origin + span * CGFloat(min(1, edge + 0.1)), y: 0)
-                    context.drawLinearGradient(gradient, start: start, end: end, options: [.drawsBeforeStartLocation, .drawsAfterEndLocation])
-                }
+                context.setFillColor(active ? fill : plan.baseInk)
+                context.addPath(path)
+                context.fillPath()
             } else {
                 var value = glyph.value
                 var zero = CGPoint.zero
-                context.setFillColor(!active ? plan.baseInk : (progress > 0 ? plan.brightInk : plan.dimInk))
+                context.setFillColor(plan.baseInk)
+                context.setAlpha(active ? fill.alpha : 1)
                 CTFontDrawGlyphs(glyph.font, &value, &zero, 1, context)
             }
             context.restoreGState()

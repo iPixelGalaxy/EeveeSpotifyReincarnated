@@ -33,7 +33,8 @@ extension KaraokeLyricsDto {
                     KaraokeSyllableDto(text: String($0), startMs: entry.startMs, endMs: entry.startMs, isPartOfWord: false)
                 },
                 startMs: entry.startMs,
-                endMs: nextStartMs ?? entry.startMs + 4000
+                endMs: nextStartMs ?? entry.startMs + 4000,
+                isLineSynced: true
             ))
         }
 

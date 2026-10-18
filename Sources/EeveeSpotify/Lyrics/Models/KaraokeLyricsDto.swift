@@ -35,6 +35,7 @@ struct KaraokeLineDto {
     var isInterlude = false
     var isOppositeAligned = false
     var isBackground = false
+    var isLineSynced = false
 
     var plainText: String { syllables.plainText }
 
@@ -109,6 +110,7 @@ struct KaraokeLyricsDto {
     var makerUrl: String? = nil
     var uploaderAvatarUrl: String? = nil
     var makerAvatarUrl: String? = nil
+    var hasExperimentalWordTiming = false
 }
 
 

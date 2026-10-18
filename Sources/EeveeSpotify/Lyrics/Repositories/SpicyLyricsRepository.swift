@@ -238,6 +238,7 @@ class SpicyLyricsRepository: LyricsRepository {
         let startMs = node["StartTime"]?.doubleValue.map { Int($0 * 1000) } ?? start
         let endMs = node["EndTime"]?.doubleValue.map { Int($0 * 1000) } ?? end
         var timing = syllables(node["Syllables"]?.arrayValue ?? [])
+        let isLineSynced = timing.isEmpty
         if timing.isEmpty {
             let text = node["Text"]?.stringValue ?? node.stringValue ?? fallbackText
             timing = text.split(whereSeparator: { $0.isWhitespace }).map {
@@ -247,7 +248,7 @@ class SpicyLyricsRepository: LyricsRepository {
         guard !timing.isEmpty else { return nil }
         return KaraokeLineDto(syllables: timing, startMs: startMs,
                               endMs: max(endMs, timing.map(\.endMs).max() ?? startMs),
-                              isOppositeAligned: opposite, isBackground: isBackground)
+                              isOppositeAligned: opposite, isBackground: isBackground, isLineSynced: isLineSynced)
     }
 
     // Preserve source onsets, including intentional overlaps; only repair negative durations.

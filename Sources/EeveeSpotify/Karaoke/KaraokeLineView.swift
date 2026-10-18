@@ -48,7 +48,8 @@ struct KaraokeLineView: View {
                     .allowsHitTesting(false)
             } else {
                 let plan = textCache.plan(words: layout.words, width: availableWidth, fontSize: fontSize,
-                                          alignment: alignment, rtl: layout.isRTL)
+                                          alignment: alignment, rtl: layout.isRTL,
+                                          timingRange: layout.startMs...max(layout.startMs, layout.endMs))
                 KaraokeShapedText(plan: plan, currentMs: currentMs, active: singing, timingOffsetMs: timingOffsetMs, onSeek: onSeek)
                     .frame(width: plan.drawingSize.width, height: plan.drawingSize.height)
                     .padding(.horizontal, -plan.horizontalGutter)
@@ -80,13 +81,15 @@ private struct KaraokeInterludeView: View {
         HStack(spacing: fontSize * 0.4) {
             ForEach(0..<3) { index in
                 let progress = min(1, max(0, (Double(currentMs - startMs) - Double(index) * duration) / duration))
+                let elapsed = Double(currentMs - startMs) - Double(index) * duration
+                let glow = elapsed < 0 ? 0 : (elapsed <= duration ? progress : max(0, 1 - (elapsed - duration) / 350))
                 Circle()
                     .fill(Color.white)
                     .frame(width: fontSize * 0.5, height: fontSize * 0.5)
                     .scaleEffect(Self.scale.value(at: progress))
                     .offset(y: fontSize * Self.lift.value(at: progress))
                     .opacity(Self.opacity.value(at: progress))
-                    .shadow(color: .white.opacity(progress > 0 && progress < 1 ? 0.45 : 0), radius: 15)
+                    .shadow(color: .white.opacity(glow * 0.45), radius: 15)
             }
         }
         .padding(.vertical, 22)

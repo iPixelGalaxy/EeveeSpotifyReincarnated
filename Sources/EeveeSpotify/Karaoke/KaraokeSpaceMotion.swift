@@ -182,7 +182,8 @@ final class KaraokeSpaceMotion: ObservableObject {
             state.direction = raw / max(0.001, magnitude)
             state.peak = 0
             // Ignore the braking half of one flick rather than canceling its throw.
-            state.pulseUntil = motion.timestamp + 0.28
+            // USB recording shows braking continues beyond 280 ms after the onset.
+            state.pulseUntil = motion.timestamp + 0.45
         }
         let projection = raw.x * state.direction.x + raw.y * state.direction.y + raw.z * state.direction.z
         if motion.timestamp < state.pulseUntil, projection > magnitude * 0.5, strength > state.peak {

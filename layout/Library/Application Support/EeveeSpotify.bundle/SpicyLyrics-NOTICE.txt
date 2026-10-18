@@ -29,3 +29,5 @@ Native implementation: KaraokeSpaceGravityView.swift and KaraokeSpaceMotion.swif
 Phone acceleration replaces desktop window-motion impulses.
 
 Optional native spring scrolling adapts LyricsVirtualizer.ts. Experimental word units and weighted timing ranges adapt ExperimentalWordSync.ts. Dash-aware floating groups adapt SpaceGravity.ts.
+
+Optional native pinned footers adapt CreateLyricsFooter.ts and Lyrics/main.css: Full pins all credits; No Writers keeps songwriters in the scrolling lyrics.

@@ -109,6 +109,19 @@ struct EeveeLyricsSettingsView: View {
         }
     }
 
+    @ViewBuilder private func pinnedFooterControls() -> some View {
+        Picker("karaoke_pin_footer".localized, selection: $karaokeOptions.pinnedFooterMode) {
+            ForEach(KaraokePinnedFooterMode.allCases, id: \.self) { mode in
+                Text(mode.displayName).tag(mode)
+            }
+        }.disabled(karaokeOptions.spaceGravityMode)
+        if karaokeOptions.spaceGravityMode {
+            Text("karaoke_footer_gravity".localized).font(.caption).foregroundColor(.gray)
+        } else if karaokeOptions.pinnedFooterMode == .noWriters {
+            Text("karaoke_footer_writers_scroll".localized).font(.caption).foregroundColor(.gray)
+        }
+    }
+
     @ViewBuilder private func karaokeAppearanceSection() -> some View {
         Section {
             Toggle(
@@ -123,6 +136,7 @@ struct EeveeLyricsSettingsView: View {
                 wordSplittingControls()
                 Toggle("karaoke_smooth_scrolling".localized, isOn: $karaokeOptions.smoothScrolling)
                 customFontControls()
+                pinnedFooterControls()
                 Picker("karaoke_alignment".localized, selection: $karaokeOptions.textAlignment) {
                     ForEach(KaraokeTextAlignment.allCases, id: \.self) { alignment in
                         Text(alignment.displayName).tag(alignment)

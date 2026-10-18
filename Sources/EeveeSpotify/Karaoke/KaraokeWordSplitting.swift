@@ -7,7 +7,21 @@ extension KaraokeLyricsDto {
     func splittingTimedWords() -> KaraokeLyricsDto {
         var result = self
         for index in result.lines.indices where !result.lines[index].isInterlude {
-            result.lines[index].syllables = result.lines[index].syllables.flatMap { splitTimedSyllable($0) }
+            let line = result.lines[index]
+            // Line-only adapters store separate words with instantaneous timestamps.
+            // Rebuild their timing from the line range before splitting its words.
+            let instantaneous = !line.syllables.isEmpty && line.syllables.allSatisfy {
+                $0.startMs == line.startMs && $0.endMs <= $0.startMs
+            }
+            let source: [KaraokeSyllableDto]
+            if line.isLineSynced || instantaneous {
+                source = [KaraokeSyllableDto(text: line.plainText, startMs: line.startMs,
+                    endMs: max(line.startMs, line.endMs), isPartOfWord: false)]
+            } else { source = line.syllables }
+            let words = source.flatMap { splitTimedSyllable($0) }
+            if words != line.syllables { result.hasExperimentalWordTiming = true }
+            result.lines[index].syllables = words
+            result.lines[index].isLineSynced = false
         }
         return result
     }

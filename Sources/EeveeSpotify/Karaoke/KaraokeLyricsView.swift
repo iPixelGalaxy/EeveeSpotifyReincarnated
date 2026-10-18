@@ -125,6 +125,26 @@ private struct KaraokeScrollingLines: View {
     @State private var creditsAtBottom = false
     @State private var creditsTopPadding: CGFloat = 0
     @State private var naturalContentHeight: CGFloat = .infinity
+    @State private var pinnedCreditsHeight: CGFloat = 0
+    private var viewportHeight: CGFloat {
+        max(1, size.height - (options.pinnedFooterMode == .off ? 0 : min(pinnedCreditsHeight, size.height * 0.28)))
+    }
+
+    @ViewBuilder private var pinnedFooter: some View {
+        if options.pinnedFooterMode != .off {
+            ScrollView(showsIndicators: false) {
+                KaraokeCreditsFooterView(lyrics: lyrics, showWriters: options.pinnedFooterMode == .full)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .background(GeometryReader { geometry in
+                        Color.clear.preference(key: KaraokePinnedCreditsHeight.self, value: geometry.size.height)
+                    })
+            }
+            .frame(height: min(pinnedCreditsHeight, size.height * 0.28))
+            .onPreferenceChange(KaraokePinnedCreditsHeight.self) { height in
+                if height.isFinite, abs(height - pinnedCreditsHeight) > 0.5 { pinnedCreditsHeight = height }
+            }
+        }
+    }
 
     private var horizontalPadding: CGFloat { max(20, size.width * 0.05) }
     private var fontSize: CGFloat { 1.3 * CGFloat(KaraokeOptions.textScaleBaseline) * CGFloat(min(1.3, max(0.7, options.textScale))) * min(36, max(28, size.width * 0.075)) }
@@ -148,7 +168,7 @@ private struct KaraokeScrollingLines: View {
             }
         }
         // scrollTo aligns the same fraction of the item and viewport; account for both heights.
-        let shift = lineHeight / max(lineHeight, size.height - itemHeight)
+        let shift = lineHeight / max(lineHeight, viewportHeight - itemHeight)
         let y = options.reversedDirection ? 0.75 - shift : 0.25 + shift
         return UnitPoint(x: 0.5, y: min(0.95, max(0.05, y)))
     }
@@ -158,114 +178,123 @@ private struct KaraokeScrollingLines: View {
         let flip: CGFloat = options.reversedDirection ? -1 : 1
 
         ScrollViewReader { proxy in
-            ScrollView(showsIndicators: false) {
-                LazyVStack(alignment: alignment, spacing: fontSize * 0.4) {
-                    Color.clear.frame(height: size.height * 0.25)
+            VStack(spacing: 0) {
+                ScrollView(showsIndicators: false) {
+                    LazyVStack(alignment: alignment, spacing: fontSize * 0.4) {
+                        Color.clear.frame(height: viewportHeight * 0.25)
 
-                    ForEach(Array(layouts.enumerated()).filter { entry in
-                        !entry.element.isInterlude || (currentMs >= entry.element.startMs && currentMs < entry.element.endMs)
-                    }, id: \.offset) { index, layout in
-                        KaraokeLineView(
-                            layout: layout,
-                            currentMs: currentMs,
-                            isActiveLine: index == activeLineIndex || (currentMs >= layout.startMs && currentMs < layout.endMs),
-                            availableWidth: max(0, size.width - horizontalPadding * 2),
-                            alignment: options.textAlignment == .automatic
-                                ? (layout.isOppositeAligned ? .trailing : .leading) : alignment,
-                            fontSize: fontSize * (layout.isBackground ? 0.72 : 1),
-                            distance: index - (activeLineIndex ?? 0),
-                            isBrowsing: isBrowsing,
-                            blurIntensity: options.blurIntensity,
-                            timingOffsetMs: Int(options.timingOffsetMs),
-                            onSeek: {
-                            guard KaraokePlaybackTracker.shared.seek(toMs: max(0, layout.startMs - Int(options.timingOffsetMs))) else {
-                                UINotificationFeedbackGenerator().notificationOccurred(.error)
-                                return
-                            }
-                            isBrowsing = false
-                            isDragging = false
-                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                            withAnimation(.easeOut(duration: 0.35)) {
-                                proxy.scrollTo(index, anchor: focus)
-                            }
-                            }
-                        )
-                        .id(index)
-                        .padding(.horizontal, horizontalPadding)
-                        .scaleEffect(x: 1, y: flip)
+                        ForEach(Array(layouts.enumerated()).filter { entry in
+                            !entry.element.isInterlude || (currentMs >= entry.element.startMs && currentMs < entry.element.endMs)
+                        }, id: \.offset) { index, layout in
+                            KaraokeLineView(
+                                layout: layout,
+                                currentMs: currentMs,
+                                isActiveLine: index == activeLineIndex || (currentMs >= layout.startMs && currentMs < layout.endMs),
+                                availableWidth: max(0, size.width - horizontalPadding * 2),
+                                alignment: options.textAlignment == .automatic
+                                    ? (layout.isOppositeAligned ? .trailing : .leading) : alignment,
+                                fontSize: fontSize * (layout.isBackground ? 0.72 : 1),
+                                distance: index - (activeLineIndex ?? 0),
+                                isBrowsing: isBrowsing,
+                                blurIntensity: options.blurIntensity,
+                                timingOffsetMs: Int(options.timingOffsetMs),
+                                onSeek: {
+                                guard KaraokePlaybackTracker.shared.seek(toMs: max(0, layout.startMs - Int(options.timingOffsetMs))) else {
+                                    UINotificationFeedbackGenerator().notificationOccurred(.error)
+                                    return
+                                }
+                                isBrowsing = false
+                                isDragging = false
+                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                withAnimation(.easeOut(duration: 0.35)) {
+                                    proxy.scrollTo(index, anchor: focus)
+                                }
+                                }
+                            )
+                            .id(index)
+                            .padding(.horizontal, horizontalPadding)
+                            .scaleEffect(x: 1, y: flip)
+                        }
+
+                        if options.pinnedFooterMode != .full {
+                            KaraokeCreditsFooterView(lyrics: lyrics, showDetails: options.pinnedFooterMode == .off)
+                                .padding(.top, creditsTopPadding)
+                                .padding(.bottom, fontSize * 1.1)
+                                .background(GeometryReader { geometry in
+                                    Color.clear.preference(key: KaraokeCreditsBottomKey.self,
+                                        value: geometry.frame(in: .named("KaraokeLyricsScroll")).maxY)
+                                        .preference(key: KaraokeContentBottomKey.self,
+                                            value: geometry.frame(in: .named("KaraokeLyricsContent")).maxY)
+                                })
+                                .scaleEffect(x: 1, y: flip)
+                        } else {
+                            Color.clear.frame(height: max(fontSize * 1.1, viewportHeight * 0.65))
+                        }
+
                     }
-
-                    KaraokeCreditsFooterView(lyrics: lyrics)
-                        .padding(.top, creditsTopPadding)
-                        .padding(.bottom, fontSize * 1.1)
-                        .background(GeometryReader { geometry in
-                            Color.clear.preference(key: KaraokeCreditsBottomKey.self,
-                                value: geometry.frame(in: .named("KaraokeLyricsScroll")).maxY)
-                                .preference(key: KaraokeContentBottomKey.self,
-                                    value: geometry.frame(in: .named("KaraokeLyricsContent")).maxY)
-                        })
-                        .scaleEffect(x: 1, y: flip)
-
+                    .frame(maxWidth: .infinity)
+                    .background(KaraokeScrollLimits())
+                    .coordinateSpace(name: "KaraokeLyricsContent")
                 }
-                .frame(maxWidth: .infinity)
-                .background(KaraokeScrollLimits())
-                .coordinateSpace(name: "KaraokeLyricsContent")
-            }
-            .coordinateSpace(name: "KaraokeLyricsScroll")
-            .onPreferenceChange(KaraokeCreditsBottomKey.self) { bottom in
-                creditsAtBottom = bottom.isFinite && bottom <= size.height + 1
-            }
-            .onPreferenceChange(KaraokeContentBottomKey.self) { bottom in
-                guard bottom.isFinite else { return }
-                // For short songs, fill above credits rather than leaving empty space below them.
-                naturalContentHeight = bottom - creditsTopPadding
-                let padding = max(0, size.height - naturalContentHeight)
-                if abs(padding - creditsTopPadding) > 0.5 { creditsTopPadding = padding }
-            }
-            .onChange(of: size.height) { height in
-                if naturalContentHeight.isFinite { creditsTopPadding = max(0, height - naturalContentHeight) }
-            }
-            .mask(
-                LinearGradient(stops: [
-                    .init(color: .clear, location: 0),
-                    .init(color: .black, location: 0.08),
-                    .init(color: .black, location: 0.88),
-                    .init(color: creditsAtBottom ? .black : .clear, location: 1)
-                ], startPoint: .top, endPoint: .bottom)
-            )
-            .simultaneousGesture(DragGesture(minimumDistance: 8)
-                .onChanged { _ in
-                    KaraokeOverlayPresenter.interact(dragging: true)
-                    isDragging = true
-                    isBrowsing = true
+                .frame(height: viewportHeight)
+                .coordinateSpace(name: "KaraokeLyricsScroll")
+                .onPreferenceChange(KaraokeCreditsBottomKey.self) { bottom in
+                    creditsAtBottom = bottom.isFinite && bottom <= viewportHeight + 1
                 }
-                .onEnded { _ in
-                    KaraokeOverlayPresenter.interact()
-                    isDragging = false
-                    resumeAt = Date().addingTimeInterval(3)
+                .onPreferenceChange(KaraokeContentBottomKey.self) { bottom in
+                    guard bottom.isFinite, options.pinnedFooterMode != .full else { return }
+                    // For short songs, fill above credits rather than leaving empty space below them.
+                    naturalContentHeight = bottom - creditsTopPadding
+                    let padding = max(0, viewportHeight - naturalContentHeight)
+                    if abs(padding - creditsTopPadding) > 0.5 { creditsTopPadding = padding }
                 }
-            )
-            .onAppear {
-                guard let activeLineIndex = activeLineIndex, activeLineIndex < lyrics.lines.count else { return }
-                proxy.scrollTo(activeLineIndex, anchor: focus)
-            }
-            .onChange(of: activeLineIndex) { newIndex in
-                guard !isBrowsing, let newIndex = newIndex, newIndex < lyrics.lines.count else { return }
-                withAnimation(scrollAnimation) {
-                    proxy.scrollTo(newIndex, anchor: focus)
+                .onChange(of: viewportHeight) { height in
+                    if naturalContentHeight.isFinite, options.pinnedFooterMode != .full { creditsTopPadding = max(0, height - naturalContentHeight) }
+                    if !isBrowsing, let activeLineIndex { proxy.scrollTo(activeLineIndex, anchor: focus) }
                 }
-            }
-            .onChange(of: currentMs) { _ in
-                guard isBrowsing, !isDragging, Date() >= resumeAt else { return }
-                isBrowsing = false
-                if let activeLineIndex = activeLineIndex {
+                .mask(
+                    LinearGradient(stops: [
+                        .init(color: .clear, location: 0),
+                        .init(color: .black, location: 0.08),
+                        .init(color: .black, location: 0.88),
+                        .init(color: creditsAtBottom && options.pinnedFooterMode != .full ? .black : .clear, location: 1)
+                    ], startPoint: .top, endPoint: .bottom)
+                )
+                .simultaneousGesture(DragGesture(minimumDistance: 8)
+                    .onChanged { _ in
+                        KaraokeOverlayPresenter.interact(dragging: true)
+                        isDragging = true
+                        isBrowsing = true
+                    }
+                    .onEnded { _ in
+                        KaraokeOverlayPresenter.interact()
+                        isDragging = false
+                        resumeAt = Date().addingTimeInterval(3)
+                    }
+                )
+                .onAppear {
+                    guard let activeLineIndex = activeLineIndex, activeLineIndex < lyrics.lines.count else { return }
+                    proxy.scrollTo(activeLineIndex, anchor: focus)
+                }
+                .onChange(of: activeLineIndex) { newIndex in
+                    guard !isBrowsing, let newIndex = newIndex, newIndex < lyrics.lines.count else { return }
                     withAnimation(scrollAnimation) {
-                        proxy.scrollTo(activeLineIndex, anchor: focus)
+                        proxy.scrollTo(newIndex, anchor: focus)
                     }
                 }
+                .onChange(of: currentMs) { _ in
+                    guard isBrowsing, !isDragging, Date() >= resumeAt else { return }
+                    isBrowsing = false
+                    if let activeLineIndex = activeLineIndex {
+                        withAnimation(scrollAnimation) {
+                            proxy.scrollTo(activeLineIndex, anchor: focus)
+                        }
+                    }
+                }
+                // Flip the list and counter-flip rows; y-only so leading/trailing alignment isn't mirrored.
+                .scaleEffect(x: 1, y: flip)
+                pinnedFooter
             }
-            // Flip the list and counter-flip rows; y-only so leading/trailing alignment isn't mirrored.
-            .scaleEffect(x: 1, y: flip)
         }
         .environment(\.layoutDirection, lyrics.isRTL ? .rightToLeft : .leftToRight)
     }
@@ -335,4 +364,9 @@ private struct KaraokeScrollLimits: UIViewRepresentable {
             }
         }
     }
+}
+
+private struct KaraokePinnedCreditsHeight: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
 }

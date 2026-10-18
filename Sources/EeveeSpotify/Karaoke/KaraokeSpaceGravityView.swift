@@ -357,7 +357,7 @@ private final class KaraokeGravityField: UIView, UIGestureRecognizerDelegate {
         let width = min(max(1, bounds.width - 36), ceil((text as NSString).size(withAttributes: [.font: KaraokeFont.shared.font(ofSize: font)]).width) + font * 0.3 + 4)
         let color: UIColor = line.isOppositeAligned ? UIColor(red: 1, green: 140.0 / 255, blue: 168.0 / 255, alpha: 1) : .white
         let plan = KaraokeTextPlan(words: word.dot ? word.syllables.map { [$0] } : [word.syllables], width: width, fontSize: font,
-                                   alignment: .leading, rtl: line.isRTL, inkColor: color)
+                                   alignment: .leading, rtl: line.isRTL, inkColor: color, isInterlude: word.dot)
         let canvas = KaraokeTextCanvas(frame: CGRect(origin: .zero, size: plan.drawingSize))
         canvas.alpha = 0
         canvas.isUserInteractionEnabled = !word.dot

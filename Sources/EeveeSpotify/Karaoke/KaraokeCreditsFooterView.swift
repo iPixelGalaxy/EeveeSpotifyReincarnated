@@ -3,6 +3,8 @@ import SwiftUI
 @available(iOS 15.0, *)
 struct KaraokeCreditsFooterView: View {
     let lyrics: KaraokeLyricsDto
+    var showWriters = true
+    var showDetails = true
 
     private var providerLabel: String? {
         nonEmpty(lyrics.providerName) ?? nonEmpty(lyrics.providerCode).map { _ in SpicyLyricsRepository.providerName }
@@ -19,24 +21,30 @@ struct KaraokeCreditsFooterView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if !lyrics.songWriters.isEmpty {
+            if showWriters, !lyrics.songWriters.isEmpty {
                 Text("\("lyrics_written_by".localized) \(lyrics.songWriters.joined(separator: ", "))")
                     .font(.system(size: 19.5, weight: .semibold))
                     .foregroundColor(.white.opacity(0.6))
                     .fixedSize(horizontal: false, vertical: true)
             }
-            if let provider = providerLabel {
-                Text("\("lyrics_provided_by".localized): \(provider)")
-                    .font(.system(size: 19.5, weight: .semibold))
-                    .foregroundColor(.white.opacity(0.5))
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            if let maker = nonEmpty(lyrics.makerName) {
-                profile("lyrics_made_by".localized, name: maker, link: lyrics.makerUrl, avatar: lyrics.makerAvatarUrl)
-            }
-            if let uploader = nonEmpty(lyrics.uploaderName) {
-                profile(nonEmpty(lyrics.makerName) == nil ? "lyrics_made_by".localized : "lyrics_uploaded_by".localized,
-                        name: uploader, link: lyrics.uploaderUrl, avatar: lyrics.uploaderAvatarUrl)
+            if showDetails {
+                if let provider = providerLabel {
+                    Text("\("lyrics_provided_by".localized): \(provider)")
+                        .font(.system(size: 19.5, weight: .semibold))
+                        .foregroundColor(.white.opacity(0.5))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if let maker = nonEmpty(lyrics.makerName) {
+                    profile("lyrics_made_by".localized, name: maker, link: lyrics.makerUrl, avatar: lyrics.makerAvatarUrl)
+                }
+                if let uploader = nonEmpty(lyrics.uploaderName) {
+                    profile(nonEmpty(lyrics.makerName) == nil ? "lyrics_made_by".localized : "lyrics_uploaded_by".localized,
+                            name: uploader, link: lyrics.uploaderUrl, avatar: lyrics.uploaderAvatarUrl)
+                }
+                if lyrics.hasExperimentalWordTiming {
+                    Text("karaoke_experimental_timing".localized)
+                        .font(.caption).foregroundColor(.white.opacity(0.5))
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

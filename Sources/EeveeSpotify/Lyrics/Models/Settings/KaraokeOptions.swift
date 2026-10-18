@@ -11,6 +11,14 @@ enum KaraokeTextAlignment: String, Codable, CaseIterable {
     }
 }
 
+enum KaraokePinnedFooterMode: String, Codable, CaseIterable {
+    case off
+    case noWriters
+    case full
+
+    var displayName: String { "karaoke_footer_\(rawValue)".localized }
+}
+
 struct KaraokeOptions: Codable, Hashable {
     static let textScaleBaseline: Double = 0.95
     private var textScaleVersion = 1
@@ -23,6 +31,7 @@ struct KaraokeOptions: Codable, Hashable {
     var allowScreenRecording = true
     var spaceGravityMode = false
     var smoothScrolling = false
+    var pinnedFooterMode: KaraokePinnedFooterMode = .off
     var experimentalWordSplitting = false
     var wordSplittingEnabled: Bool { experimentalWordSplitting || spaceGravityMode }
     var customFontEnabled = false
@@ -37,7 +46,7 @@ struct KaraokeOptions: Codable, Hashable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case textAlignment, reversedDirection, enabled, blurIntensity, timingOffsetMs, allowScreenRecording, textScale, textScaleVersion, spaceGravityMode, smoothScrolling, experimentalWordSplitting, customFontEnabled, customFontURL
+        case textAlignment, reversedDirection, enabled, blurIntensity, timingOffsetMs, allowScreenRecording, textScale, textScaleVersion, spaceGravityMode, smoothScrolling, pinnedFooterMode, experimentalWordSplitting, customFontEnabled, customFontURL
     }
 
     // Settings saved before these fields existed must keep decoding.
@@ -58,6 +67,7 @@ struct KaraokeOptions: Codable, Hashable {
         allowScreenRecording = try container.decodeIfPresent(Bool.self, forKey: .allowScreenRecording) ?? true
         spaceGravityMode = try container.decodeIfPresent(Bool.self, forKey: .spaceGravityMode) ?? false
         smoothScrolling = try container.decodeIfPresent(Bool.self, forKey: .smoothScrolling) ?? false
+        pinnedFooterMode = KaraokePinnedFooterMode(rawValue: try container.decodeIfPresent(String.self, forKey: .pinnedFooterMode) ?? "off") ?? .off
         experimentalWordSplitting = try container.decodeIfPresent(Bool.self, forKey: .experimentalWordSplitting) ?? false
         customFontEnabled = try container.decodeIfPresent(Bool.self, forKey: .customFontEnabled) ?? false
         customFontURL = try container.decodeIfPresent(String.self, forKey: .customFontURL) ?? ""
