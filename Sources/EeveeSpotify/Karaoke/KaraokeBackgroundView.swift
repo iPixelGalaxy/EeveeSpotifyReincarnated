@@ -25,7 +25,7 @@ struct KaraokeBackgroundView: View {
     var body: some View {
         Group {
             if let image = albumArtImage, Self.metalRendererSupported {
-                KaraokeMetalBackgroundView(albumArt: image).ignoresSafeArea().transition(.opacity)
+                KaraokeMetalBackgroundView().ignoresSafeArea().transition(.opacity)
             } else if let image = albumArtImage {
                 TimelineView(.periodic(from: .now, by: 1.0 / 24.0)) { timeline in
                     GeometryReader { geometry in
@@ -76,7 +76,8 @@ struct KaraokeBackgroundView: View {
            let signature = Self.signature(image), signature != fingerprint {
             Self.lastImage = image
             Self.lastFingerprint = signature
-            withAnimation(.easeInOut(duration: 0.9)) {
+            if Self.metalRendererSupported { KaraokeBackgroundRenderer.shared?.setAlbumArt(image) }
+            withAnimation(.easeInOut(duration: 1.6)) {
                 fingerprint = signature
                 albumArtImage = image
             }

@@ -48,7 +48,48 @@ enum PlayerPart: String, CaseIterable, Codable {
 }
 
 enum PlayerDeclutter {
-    static let hidden = Set(UserDefaults.playerOptions.hiddenParts)
+    private static let configuredHidden = Set(UserDefaults.playerOptions.hiddenParts)
+    private static var lyricsOverride = false
+    static var isLyricsOverrideActive: Bool { lyricsOverride }
+    static var hidden: Set<PlayerPart> {
+        lyricsOverride ? configuredHidden.union([.allCards, .lyricsPreview]) : configuredHidden
+    }
+    private final class ForcedVisibility {
+        weak var view: UIView?
+        let alpha: CGFloat
+        let interactive: Bool
+        let accessible: Bool
+        init(_ view: UIView) { self.view = view; alpha = view.alpha; interactive = view.isUserInteractionEnabled; accessible = view.accessibilityElementsHidden }
+    }
+    private static var forcedViews: [ObjectIdentifier: ForcedVisibility] = [:]
+    private static let trimmedScrolls = NSHashTable<UIScrollView>.weakObjects()
+
+    static func setLyricsOverride(_ enabled: Bool, in root: UIView?) {
+        guard lyricsOverride != enabled else { return }
+        lyricsOverride = enabled
+        if !enabled {
+            for saved in forcedViews.values {
+                saved.view?.alpha = saved.alpha
+                saved.view?.isUserInteractionEnabled = saved.interactive
+                saved.view?.accessibilityElementsHidden = saved.accessible
+            }
+            forcedViews.removeAll()
+        }
+        var queue = root.map { [$0] } ?? []
+        while let view = queue.popLast() {
+            if NSStringFromClass(type(of: view)).contains("KaraokeCanvasContainer") { continue }
+            if let collection = view as? UICollectionView { cardCollections.add(collection) }
+            queue.append(contentsOf: view.subviews)
+        }
+        for collection in cardCollections.allObjects {
+            for cell in collection.visibleCells { resetCard(cell) }
+            collection.collectionViewLayout.invalidateLayout()
+            collection.setNeedsLayout()
+        }
+        if let root { trimEmptyTail(in: root); root.setNeedsLayout() }
+        PlayerAssistantVisibility.refresh()
+        writeDebugLog("[Karaoke][declutter] temporary All Cards and Lyrics Preview=\(enabled)")
+    }
     static let cardsMeter = PerfMeter("Player][Cards")
     static let buttonsMeter = PerfMeter("Player][Buttons")
     private static var loggedCards = Set<PlayerPart>()
@@ -73,7 +114,7 @@ enum PlayerDeclutter {
         }
     }
 
-    static let hiddenIds: Set<String> = Set(hidden.flatMap(\.buttonIds))
+    static var hiddenIds: Set<String> { Set(hidden.flatMap(\.buttonIds)) }
 
     static func hideButtons(in unit: UIViewController) {
         for item in row(in: unit) where item.alpha != 0 {
@@ -89,8 +130,13 @@ enum PlayerDeclutter {
     }
 
     // Arranged views vanish by alpha: some Spotify stacks trap when an arranged view is hidden.
-    static func vanish(_ view: UIView) {
+    static func vanish(_ view: UIView, part: PlayerPart? = nil) {
         guard view.alpha != 0 else { return }
+        if lyricsOverride, let part, !configuredHidden.contains(.allCards), !configuredHidden.contains(part),
+           !(part == .talkAboutSong && configuredHidden.contains(.aboutSong)) {
+            let key = ObjectIdentifier(view)
+            if forcedViews[key]?.view !== view { forcedViews[key] = ForcedVisibility(view) }
+        }
         view.alpha = 0
         view.isUserInteractionEnabled = false
         view.accessibilityElementsHidden = true
@@ -125,7 +171,7 @@ enum PlayerDeclutter {
                 $0 is UIImageView || $0.layer.contents != nil || NSStringFromClass(type(of: $0)).contains("Image")
             }) != nil
             if portrait || image {
-                vanish(view)
+                vanish(view, part: .artistCircles)
                 var ancestor = view.superview
                 while let current = ancestor {
                     if let cell = current as? UICollectionViewCell,
@@ -205,7 +251,7 @@ enum PlayerDeclutter {
               parent.subviews.allSatisfy({ $0 === branch || !hasVisibleContent($0) }) {
             branch = parent
         }
-        vanish(branch)
+        vanish(branch, part: .talkAboutSong)
         if objc_getAssociatedObject(view, &promptKey) == nil {
             objc_setAssociatedObject(view, &promptKey, true, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
             var ancestor = branch.superview
@@ -247,7 +293,16 @@ enum PlayerDeclutter {
 
     /// Once collapsed cards leave no vertical overflow, prevent elastic/stale empty space.
     static func trimEmptyTail(in root: UIView) {
-        guard hidden.contains(.allCards) || [.talkAboutSong, .aboutSong, .artistCircles].allSatisfy(hidden.contains) else { return }
+        guard hidden.contains(.allCards) || [.talkAboutSong, .aboutSong, .artistCircles].allSatisfy(hidden.contains) else {
+            for scroll in trimmedScrolls.allObjects {
+                objc_setAssociatedObject(scroll, &scrollOffsetKey, nil, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+                if let saved = objc_getAssociatedObject(scroll, &bounceKey) as? [Bool], saved.count == 3 {
+                    scroll.bounces = saved[0]; scroll.alwaysBounceVertical = saved[1]; scroll.isScrollEnabled = saved[2]
+                    objc_setAssociatedObject(scroll, &bounceKey, nil, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+                }
+            }
+            return
+        }
         let collapsed = cardsAreCollapsed(in: root)
         var queue = [root]
         while !queue.isEmpty {
@@ -261,6 +316,7 @@ enum PlayerDeclutter {
             let empty = collapsed || scroll.contentSize.height <= scroll.bounds.height + 1
             if empty {
                 if objc_getAssociatedObject(scroll, &bounceKey) == nil {
+                    trimmedScrolls.add(scroll)
                     objc_setAssociatedObject(scroll, &bounceKey, [scroll.bounces, scroll.alwaysBounceVertical, scroll.isScrollEnabled], .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
                 }
                 scroll.bounces = false
@@ -410,7 +466,7 @@ class PlayerLyricsPreviewHook: ClassHook<UIView> {
 
     func layoutSubviews() {
         orig.layoutSubviews()
-        PlayerDeclutter.vanish(target)
+        if PlayerDeclutter.hidden.contains(.lyricsPreview) { PlayerDeclutter.vanish(target, part: .lyricsPreview) }
     }
 }
 
@@ -431,7 +487,9 @@ func activatePlayerDeclutter() {
         UserDefaults.standard.set(true, forKey: "eeveeTrimmedLyricsFooterV1")
     }
     let hidden = PlayerDeclutter.hidden
-    guard !hidden.isEmpty else { return }
+    let lyricsSupport: Bool
+    if #available(iOS 15.0, *) { lyricsSupport = true } else { lyricsSupport = false }
+    guard !hidden.isEmpty || lyricsSupport else { return }
     let start = CFAbsoluteTimeGetCurrent()
     var active = [String]()
     func activate(_ name: String, _ wanted: Bool, _ group: HookGroup, _ classes: String...) {
@@ -445,13 +503,13 @@ func activatePlayerDeclutter() {
         active.append(name)
     }
 
-    activate("player extras", hidden.contains(.talkAboutSong) || hidden.contains(.artistCircles) || hidden.contains(.allCards),
+    activate("player extras", lyricsSupport || hidden.contains(.talkAboutSong) || hidden.contains(.artistCircles) || hidden.contains(.allCards),
              PlayerAssistantDeclutterGroup(), PlayerAssistantHook.targetName, PlayerAssistantFooterHook.targetName)
     activate("buttons", !PlayerDeclutter.hiddenIds.isEmpty, PlayerButtonsDeclutterGroup(),
              PlayerControlsDeclutterHook.targetName, PlayerFooterDeclutterHook.targetName)
     activate("add to", hidden.contains(.addTo), PlayerAddToDeclutterGroup(), PlayerInfoDeclutterHook.targetName)
-    activate("lyrics preview", hidden.contains(.lyricsPreview), PlayerLyricsPreviewDeclutterGroup(), PlayerLyricsPreviewHook.targetName)
-    activate("cards", !hidden.isDisjoint(with: PlayerPart.cards), PlayerCardsDeclutterGroup(), PlayerCardCellHook.targetName)
+    activate("lyrics preview", lyricsSupport || hidden.contains(.lyricsPreview), PlayerLyricsPreviewDeclutterGroup(), PlayerLyricsPreviewHook.targetName)
+    activate("cards", lyricsSupport || !hidden.isDisjoint(with: PlayerPart.cards), PlayerCardsDeclutterGroup(), PlayerCardCellHook.targetName)
     eeveeLog("[EeveeSpotify][Player] Declutter: hiding %@; active %@ (%.2f ms)",
              hidden.map(\.rawValue).sorted().joined(separator: ", "), active.joined(separator: ", "),
              (CFAbsoluteTimeGetCurrent() - start) * 1000)
@@ -484,7 +542,7 @@ private enum PlayerAssistantVisibility {
                 ancestor = view.superview
             }
         }
-        let hidePrompt = visible && (PlayerDeclutter.hidden.contains(.talkAboutSong) || PlayerDeclutter.hidden.contains(.allCards))
+        let hidePrompt = (visible || PlayerDeclutter.isLyricsOverrideActive) && (PlayerDeclutter.hidden.contains(.talkAboutSong) || PlayerDeclutter.hidden.contains(.allCards))
         for root in roots.allObjects {
             if hidePrompt {
                 if objc_getAssociatedObject(root, &savedAlphaKey) == nil {

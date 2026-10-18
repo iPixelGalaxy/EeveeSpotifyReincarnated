@@ -1,4 +1,5 @@
 import UIKit
+import ObjectiveC.runtime
 import SwiftUI
 
 /// Replace the Canvas layer; native header, song information, and transport stay above it.
@@ -33,10 +34,12 @@ final class KaraokeOverlayPresenter {
         let hidden: Bool
         let interactive: Bool
         let accessibilityHidden: Bool
+        let clips: Bool
         init(_ view: UIView) {
             self.view = view; alpha = view.alpha; hidden = view.isHidden
             interactive = view.isUserInteractionEnabled
             accessibilityHidden = view.accessibilityElementsHidden
+            clips = view.clipsToBounds
         }
     }
     private static var videoStates: [ObjectIdentifier: VideoState] = [:]
@@ -63,6 +66,72 @@ final class KaraokeOverlayPresenter {
     }
     private static var nativeStates: [ObjectIdentifier: NativeState] = [:]
 
+    private static var compactVisibilityKey: UInt8 = 0
+    private static var compactTransformKey: UInt8 = 0
+    private static var compactVisibility: [ObjectIdentifier: VideoState] = [:]
+
+    static func lockedCompactAlpha(_ value: CGFloat, in view: UIView) -> CGFloat {
+        objc_getAssociatedObject(view, &compactVisibilityKey) == nil ? value : 1
+    }
+    static func lockedCompactHidden(_ value: Bool, in view: UIView) -> Bool {
+        objc_getAssociatedObject(view, &compactVisibilityKey) == nil ? value : false
+    }
+    static func lockedCompactClipping(_ value: Bool, in view: UIView) -> Bool {
+        objc_getAssociatedObject(view, &compactVisibilityKey) == nil ? value : false
+    }
+    static func lockedCompactTransform(_ value: CGAffineTransform, in view: UIView) -> CGAffineTransform {
+        (objc_getAssociatedObject(view, &compactTransformKey) as? NSValue)?.cgAffineTransformValue ?? value
+    }
+    static func compactHit(_ point: CGPoint, in view: UIView) -> Bool {
+        guard focused, objc_getAssociatedObject(view, &compactVisibilityKey) != nil, let controls else { return false }
+        return controls.convert(controls.bounds, to: view).contains(point)
+    }
+    private static func pinCompactVisibility(_ view: UIView) {
+        let id = ObjectIdentifier(view)
+        if compactVisibility[id]?.view !== view { compactVisibility[id] = VideoState(view) }
+        objc_setAssociatedObject(view, &compactVisibilityKey, true, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+        view.isHidden = false; view.alpha = 1; view.clipsToBounds = false; view.isUserInteractionEnabled = true
+    }
+    private static func releaseCompactVisibility() {
+        for saved in compactVisibility.values {
+            guard let view = saved.view else { continue }
+            objc_setAssociatedObject(view, &compactVisibilityKey, nil, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+            objc_setAssociatedObject(view, &compactTransformKey, nil, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+            view.isHidden = saved.hidden; view.alpha = saved.alpha; view.clipsToBounds = saved.clips; view.isUserInteractionEnabled = saved.interactive
+        }
+        compactVisibility.removeAll()
+    }
+    private static var canHideFooter: Bool {
+        guard let footer else { return false }
+        return controls?.isDescendant(of: footer) != true
+    }
+    private static func dismissalBand() -> CGRect? {
+        guard let canvas else { return nil }
+        let frames = [information, duration, controls].compactMap { $0 }.compactMap { unitFrame($0, in: canvas) }
+        guard let first = frames.first else { return nil }
+        let union = frames.dropFirst().reduce(first) { $0.union($1) }
+            .offsetBy(dx: -canvas.bounds.minX, dy: -canvas.bounds.minY)
+        return CGRect(x: 0, y: max(0, union.minY - 44), width: canvas.bounds.width, height: union.height + 88)
+    }
+    static func dismissSwipeStart(_ touch: UITouch) -> (point: CGPoint, band: CGRect)? {
+        guard isPresented, let canvas, let container, let touched = touch.view,
+              touched.isDescendant(of: container), let band = dismissalBand() else { return nil }
+        let raw = touch.location(in: canvas)
+        let point = CGPoint(x: raw.x - canvas.bounds.minX, y: raw.y - canvas.bounds.minY)
+        guard point.y >= 0, point.y < canvas.bounds.height * 0.35 else { return nil }
+        return (point, band)
+    }
+    static func finishDismissSwipe(_ start: (point: CGPoint, band: CGRect), touch: UITouch, speed: CGFloat) {
+        guard let canvas else { return }
+        let raw = touch.location(in: canvas)
+        let end = CGPoint(x: raw.x - canvas.bounds.minX, y: raw.y - canvas.bounds.minY)
+        let inControls = start.band.union(dismissalBand() ?? start.band).contains(end)
+        let down = end.y - start.point.y
+        let close = speed >= 700 && down > 100 && down > abs(end.x - start.point.x) && inControls
+        writeDebugLog("[Karaoke][swipe] speed=\(Int(speed)) controls=\(inControls) close=\(close)")
+        if close { collapsePlayer() } else { interact() }
+    }
+
     static func nativeTouchBegan(_ touch: UITouch) -> Bool {
         guard isPresented else { return false }
         if let touched = touch.view, let container, touched.isDescendant(of: container) { return false }
@@ -81,21 +150,20 @@ final class KaraokeOverlayPresenter {
     }
 
     static func registerControls(_ view: UIView) {
-        let replaced = controls !== view && focused
-        if replaced { setFocused(false) }
+        if isPresented, !preparingAppearance, view.window == nil { return }
+        if let window = view.window, let frame = unitFrame(view, in: window), !frame.intersects(window.bounds) { return }
+        if focused, nativeStates[ObjectIdentifier(view)]?.view !== view { nativeStates[ObjectIdentifier(view)] = NativeState(view) }
         controls = view
-        if replaced { interact() }
         if isPresented {
-            view.alpha = 1
-            view.isUserInteractionEnabled = true
+            view.alpha = 1; view.isUserInteractionEnabled = true
             if focused { layoutCompactControls() }
         }
     }
     static func registerDuration(_ view: UIView) {
-        let replaced = duration !== view && focused
-        if replaced { setFocused(false) }
+        if isPresented, !preparingAppearance, view.window == nil { return }
+        if focused, nativeStates[ObjectIdentifier(view)]?.view !== view { nativeStates[ObjectIdentifier(view)] = NativeState(view) }
         duration = view
-        if replaced { interact() }
+        if isPresented { updateFrame() }
     }
 
     static func preparePlayer(_ controller: UIViewController) {
@@ -105,6 +173,7 @@ final class KaraokeOverlayPresenter {
         playerRoot = controller.viewIfLoaded
         guard isEnabled, UserDefaults.karaokeOptions.enabled,
               UserDefaults.lyricsSource.supportsCustomLyricsView, hasCachedLyrics else { return }
+        PlayerDeclutter.setLyricsOverride(true, in: playerRoot)
         controller.viewIfLoaded?.layoutIfNeeded()
         var pending = controller.children
         while let child = pending.popLast() {
@@ -231,7 +300,7 @@ final class KaraokeOverlayPresenter {
             }
         }
         for view in [controls, footer].compactMap({ $0 }) {
-            let hidden = focused && view === footer
+            let hidden = focused && view === footer && canHideFooter
             view.alpha = hidden ? 0 : 1
             view.isUserInteractionEnabled = !hidden
         }
@@ -256,7 +325,13 @@ final class KaraokeOverlayPresenter {
     private static func layoutCompactControls() {
         guard focused, let controls, let canvas, let window = canvas.window,
               let saved = nativeStates[ObjectIdentifier(controls)] else { return }
-        controls.alpha = 1
+        var parent: UIView? = controls
+        var depth = 0
+        while let view = parent, view !== playerRoot, view !== canvas, !(view is UIWindow), depth < 10 {
+            pinCompactVisibility(view)
+            parent = view.superview; depth += 1
+        }
+        if let row = controls.eeveeFirst(UIStackView.self, where: { $0.arrangedSubviews.count >= 3 }) { pinCompactVisibility(row) }
         controls.isUserInteractionEnabled = true
         let scale: CGFloat = 0.60
         let center = CGPoint(x: window.bounds.midX, y: window.safeAreaLayoutGuide.layoutFrame.maxY - 32)
@@ -264,6 +339,7 @@ final class KaraokeOverlayPresenter {
            abs(frame.midX - center.x) < 1, abs(frame.midY - center.y) < 1,
            abs(controls.transform.a - saved.transform.a * scale) < 0.001,
            abs(controls.transform.d - saved.transform.d * scale) < 0.001 { return }
+        objc_setAssociatedObject(controls, &compactTransformKey, nil, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
         controls.transform = saved.transform.scaledBy(x: scale, y: scale)
         guard let frame = unitFrame(controls, in: window) else { return }
         let delta = CGPoint(x: center.x - frame.midX, y: center.y - frame.midY)
@@ -273,6 +349,7 @@ final class KaraokeOverlayPresenter {
         transform.tx += moved.x - zero.x
         transform.ty += moved.y - zero.y
         controls.transform = transform
+        objc_setAssociatedObject(controls, &compactTransformKey, NSValue(cgAffineTransform: transform), .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
         controls.alpha = 1
         controls.isUserInteractionEnabled = true
     }
@@ -293,6 +370,7 @@ final class KaraokeOverlayPresenter {
         guard focused != value else { return }
         focusHeartbeat?.cancel()
         focusHeartbeat = nil
+        releaseCompactVisibility()
         focused = value
         writeDebugLog("[Karaoke][focus] focused=\(value) positionMs=\(KaraokePlaybackTracker.shared.currentPositionMs()) info=\(String(describing: information?.frame)) controls=\(String(describing: controls?.frame))")
         if value, let canvas, let window = canvas.window, let information,
@@ -313,8 +391,8 @@ final class KaraokeOverlayPresenter {
                         view.transform = transform
                     }
                 }
-                footer?.alpha = 0
-                footer?.isUserInteractionEnabled = false
+                footer?.alpha = canHideFooter ? 0 : 1
+                footer?.isUserInteractionEnabled = !canHideFooter
                 layoutCompactControls()
                 updateFrame()
             }
@@ -342,11 +420,13 @@ final class KaraokeOverlayPresenter {
     static let coverClass = "_TtC35NowPlaying_ContentLayerPlatformImpl24AccessibleCollectionView"
 
     static func registerPlayer(_ root: UIView) {
-        let replaced = footer !== root && focused
-        if replaced { setFocused(false) }
+        if isPresented, !preparingAppearance, root.window == nil { return }
+        if focused, nativeStates[ObjectIdentifier(root)]?.view !== root { nativeStates[ObjectIdentifier(root)] = NativeState(root) }
         footer = root
-        if replaced { interact() }
-        if isPresented { root.alpha = focused ? 0 : 1; root.isUserInteractionEnabled = !focused }
+        if isPresented {
+            root.alpha = focused && canHideFooter ? 0 : 1
+            root.isUserInteractionEnabled = !focused || !canHideFooter
+        }
         restoreIfNeeded()
     }
 
@@ -363,10 +443,9 @@ final class KaraokeOverlayPresenter {
     }
 
     static func registerInformation(_ root: UIView) {
-        let replaced = information !== root && focused
-        if replaced { setFocused(false) }
+        if isPresented, !preparingAppearance, root.window == nil { return }
+        if focused, nativeStates[ObjectIdentifier(root)]?.view !== root { nativeStates[ObjectIdentifier(root)] = NativeState(root) }
         information = root
-        if replaced { interact() }
         if isPresented { updateFrame() } else { restoreIfNeeded() }
     }
 
@@ -518,6 +597,7 @@ final class KaraokeOverlayPresenter {
         guard let trackId = tracker.playerReportedTrackId() ?? tracker.currentTrackId() else { return false }
         mounting = true
         defer { mounting = false }
+        PlayerDeclutter.setLyricsOverride(true, in: playerRoot)
         viewport.frame = frame
         let child = UIHostingController(rootView: KaraokeLyricsView(trackId: trackId,
             lyrics: KaraokeLyricsStore.shared.lyrics(forTrackId: trackId), viewport: viewport, onDismiss: dismiss))
@@ -576,6 +656,7 @@ final class KaraokeOverlayPresenter {
         }
         outerScrolls.removeAll()
         isPresented = false
+        PlayerDeclutter.setLyricsOverride(false, in: playerRoot)
         for saved in videoStates.values {
             saved.view?.isHidden = saved.hidden
             saved.view?.alpha = saved.alpha
@@ -610,32 +691,51 @@ private final class KaraokeCanvasContainer: UIView {
 /// Observe native sliders/buttons without delaying, cancelling, or recognizing their touches.
 private final class KaraokeControlTouchMonitor: UIGestureRecognizer {
     private var trackingNative = false
+    private var swipeStart: (point: CGPoint, band: CGRect)?
+    private weak var swipeTouch: UITouch?
+    private var samples: [(time: TimeInterval, y: CGFloat)] = []
     init() {
         super.init(target: nil, action: nil)
-        cancelsTouchesInView = false
-        delaysTouchesBegan = false
-        delaysTouchesEnded = false
+        cancelsTouchesInView = false; delaysTouchesBegan = false; delaysTouchesEnded = false
     }
-    override func canPrevent(_ preventedGestureRecognizer: UIGestureRecognizer) -> Bool { false }
-    override func canBePrevented(by preventingGestureRecognizer: UIGestureRecognizer) -> Bool { false }
+    override func canPrevent(_ other: UIGestureRecognizer) -> Bool { false }
+    override func canBePrevented(by other: UIGestureRecognizer) -> Bool { false }
+    private func sample(_ touch: UITouch) {
+        samples.append((touch.timestamp, touch.location(in: nil).y))
+        while samples.count > 2, samples[1].time < touch.timestamp - 0.12 { samples.removeFirst() }
+    }
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
-        guard !trackingNative else { return }
-        guard let touch = touches.first, KaraokeOverlayPresenter.nativeTouchBegan(touch) else { state = .failed; return }
+        guard !trackingNative, swipeStart == nil, let touch = touches.first else { return }
+        if let start = KaraokeOverlayPresenter.dismissSwipeStart(touch) {
+            swipeStart = start; swipeTouch = touch; sample(touch)
+            return
+        }
+        guard KaraokeOverlayPresenter.nativeTouchBegan(touch) else { state = .failed; return }
         trackingNative = true
     }
+    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
+        if let touch = swipeTouch, touches.contains(touch) { sample(touch) }
+    }
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
+        if let start = swipeStart, let touch = swipeTouch {
+            guard touches.contains(touch) else { return }
+            sample(touch)
+            let first = samples.first!, last = samples.last!
+            let speed = (last.y - first.y) / CGFloat(max(0.01, last.time - first.time))
+            swipeStart = nil; swipeTouch = nil; samples.removeAll()
+            KaraokeOverlayPresenter.finishDismissSwipe(start, touch: touch, speed: speed)
+        }
         if trackingNative { KaraokeOverlayPresenter.nativeTouchEnded() }
-        trackingNative = false
-        state = .failed
+        trackingNative = false; state = .failed
     }
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) {
         if trackingNative { KaraokeOverlayPresenter.nativeTouchEnded() }
-        trackingNative = false
-        state = .failed
+        if swipeStart != nil { KaraokeOverlayPresenter.interact() }
+        trackingNative = false; swipeStart = nil; swipeTouch = nil; samples.removeAll(); state = .failed
     }
     override func reset() {
         if trackingNative { KaraokeOverlayPresenter.nativeTouchEnded() }
-        trackingNative = false
+        trackingNative = false; swipeStart = nil; swipeTouch = nil; samples.removeAll()
         super.reset()
     }
 }

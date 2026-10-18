@@ -22,12 +22,15 @@ final class KaraokeBackgroundRenderer: NSObject, MTKViewDelegate {
     private var sourceImage: UIImage?
     private var previousTexture: MTLTexture?
     private var pendingImage: UIImage?
+    private var loadingImage: UIImage?
+    private var loadingToken = UUID()
+    private static let textureQueue = DispatchQueue(label: "com.eevee.karaoke.texture", qos: .userInitiated)
     private var transitionStart: CFTimeInterval = 0
-    private let transitionDuration: CFTimeInterval = 0.9
+    private let transitionDuration: CFTimeInterval = 1.6
     private static let imageContext = CIContext()
     private let startTime = CACurrentMediaTime()
 
-    var warpIntensity: Float = 0.8
+    var warpIntensity: Float = 1.0
 
     init?(device: MTLDevice) {
         self.device = device
@@ -60,30 +63,50 @@ final class KaraokeBackgroundRenderer: NSObject, MTKViewDelegate {
     }
 
     func setAlbumArt(_ image: UIImage) {
-        if sourceImage === image { pendingImage = nil; return }
-        guard let original = image.cgImage else { return }
+        if sourceImage === image {
+            pendingImage = nil; loadingImage = nil; loadingToken = UUID()
+            return
+        }
+        guard let original = image.cgImage, loadingImage !== image, pendingImage !== image else { return }
         if albumTexture != nil, CACurrentMediaTime() - transitionStart < transitionDuration {
             pendingImage = image
             return
         }
+        // The first view is prepared before presentation; subsequent uploads leave its flow running.
+        if albumTexture == nil {
+            if let texture = Self.prepareTexture(original, device: device) { install(texture, image: image) }
+            return
+        }
+        let token = UUID(), device = device
+        loadingToken = token; loadingImage = image
+        Self.textureQueue.async { [weak self] in
+            let texture = Self.prepareTexture(original, device: device)
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.loadingToken == token else { return }
+                self.loadingImage = nil
+                if let texture { self.install(texture, image: image) }
+                else { writeDebugLog("[Karaoke][background] texture upload failed; keeping previous artwork") }
+            }
+        }
+    }
+
+    private static func prepareTexture(_ original: CGImage, device: MTLDevice) -> MTLTexture? {
         let input = CIImage(cgImage: original)
         let blurred = input.clampedToExtent().applyingFilter("CIGaussianBlur", parameters: [
             kCIInputRadiusKey: Double(original.width) * 0.08
         ]).cropped(to: input.extent)
-        let cgImage = Self.imageContext.createCGImage(blurred, from: input.extent) ?? original
-        let loader = MTKTextureLoader(device: device)
-        guard let next = try? loader.newTexture(cgImage: cgImage, options: [
-            .SRGB: false,
-            .textureUsage: NSNumber(value: MTLTextureUsage.shaderRead.rawValue),
-        ]) else {
-            writeDebugLog("[Karaoke][background] texture upload failed; keeping previous artwork")
-            return
-        }
+        let image = imageContext.createCGImage(blurred, from: input.extent) ?? original
+        return try? MTKTextureLoader(device: device).newTexture(cgImage: image, options: [
+            .SRGB: false, .textureUsage: NSNumber(value: MTLTextureUsage.shaderRead.rawValue)
+        ])
+    }
+
+    private func install(_ texture: MTLTexture, image: UIImage) {
         previousTexture = albumTexture
-        albumTexture = next
+        albumTexture = texture
         sourceImage = image
         transitionStart = previousTexture == nil ? CACurrentMediaTime() - transitionDuration : CACurrentMediaTime()
-        writeDebugLog("[Karaoke][background] animated artwork blend started")
+        writeDebugLog("[Karaoke][background] animated artwork blend started duration=\(transitionDuration)")
     }
 
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
@@ -99,7 +122,7 @@ final class KaraokeBackgroundRenderer: NSObject, MTKViewDelegate {
 
         let blend = Float(min(1, max(0, (CACurrentMediaTime() - transitionStart) / transitionDuration)))
         var params = KaraokeBgParamsMirror(
-            time: Float(CACurrentMediaTime() - startTime),
+            time: Float((CACurrentMediaTime() - startTime) * 0.1),
             warpIntensity: warpIntensity,
             blurRadius: 0.018,
             blendProgress: blend
@@ -136,11 +159,11 @@ private struct KaraokeBgParamsMirror {
 
 /// SwiftUI wrapper around the MTKView + renderer.
 struct KaraokeMetalBackgroundView: UIViewRepresentable {
-    let albumArt: UIImage
 
     func makeUIView(context: Context) -> MTKView {
-        let view = MTKView()
+        let view = KaraokeMetalCanvas()
         view.preferredFramesPerSecond = 30 // matches the lyrics TimelineView's rate; no need to run faster
+        view.autoResizeDrawable = false
         view.enableSetNeedsDisplay = false
         view.isPaused = false
 
@@ -149,19 +172,27 @@ struct KaraokeMetalBackgroundView: UIViewRepresentable {
             return view
         }
         view.device = renderer.device
-        renderer.setAlbumArt(albumArt)
         view.delegate = renderer
         context.coordinator.renderer = renderer
         return view
     }
 
-    func updateUIView(_ uiView: MTKView, context: Context) {
-        context.coordinator.renderer?.setAlbumArt(albumArt)
-    }
+    func updateUIView(_ uiView: MTKView, context: Context) {}
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     final class Coordinator {
         var renderer: KaraokeBackgroundRenderer?
+    }
+}
+
+// Flowing blur needs a small render target; preserve GPU time for lyric frames.
+private final class KaraokeMetalCanvas: MTKView {
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        guard bounds.width > 0, bounds.height > 0 else { return }
+        let width = min(384, bounds.width)
+        let size = CGSize(width: width, height: max(1, (width * bounds.height / bounds.width).rounded()))
+        if drawableSize != size { drawableSize = size }
     }
 }

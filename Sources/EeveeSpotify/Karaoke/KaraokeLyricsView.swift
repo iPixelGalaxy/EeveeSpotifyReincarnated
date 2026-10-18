@@ -66,12 +66,7 @@ struct KaraokeLyricsView: View {
         .accessibilityAction(.escape) { KaraokeOverlayPresenter.collapsePlayer() }
         .simultaneousGesture(DragGesture(minimumDistance: 20)
             .onChanged { _ in KaraokeOverlayPresenter.interact(dragging: true) }
-            .onEnded { value in
-                if value.startLocation.y < UIScreen.main.bounds.height * 0.35,
-                   value.translation.height > 70, value.translation.height > abs(value.translation.width) {
-                    KaraokeOverlayPresenter.collapsePlayer()
-                } else { KaraokeOverlayPresenter.interact() }
-            })
+            .onEnded { _ in KaraokeOverlayPresenter.interact() })
         .onReceive(NotificationCenter.default.publisher(for: .eeveeKaraokeOptionsChanged)) { _ in
             let updated = UserDefaults.karaokeOptions
             if options != updated { options = updated }
@@ -80,7 +75,7 @@ struct KaraokeLyricsView: View {
     }
 
     private func content(lyrics: KaraokeLyricsDto, layouts: [KaraokeLineLayout], size: CGSize) -> some View {
-        TimelineView(.periodic(from: .now, by: 1.0 / 60.0)) { _ in
+        TimelineView(.animation(minimumInterval: 1.0 / 120.0)) { _ in
             let currentMs = KaraokePlaybackTracker.shared.currentPositionMs() + Int(options.timingOffsetMs)
 
             KaraokeScrollingLines(

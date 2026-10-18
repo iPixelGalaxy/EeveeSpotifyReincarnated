@@ -19,6 +19,10 @@ final class KaraokePlaybackTracker {
 
     private let queue = DispatchQueue(label: "com.eevee.karaoke.playback")
 
+    private var lastReportedPosition: Double?
+    private var positionCorrection: Double = 0
+    private var correctionRate: Double = 0
+    private var seekIssuedAt: TimeInterval = 0
     private var lastPosition: Double = 0
     private var lastPositionStamp: TimeInterval = 0
     private var lastPlaybackSpeed: Double = 1.0
@@ -83,8 +87,9 @@ final class KaraokePlaybackTracker {
             : nil
 
         let positionRaw = (safeValue("position") as? NSNumber)?.doubleValue
-        let playbackSpeed: Double = (safeValue("playbackSpeed") as? NSNumber)?.doubleValue ?? lastPlaybackSpeed
-        let isPlaying: Bool = (safeValue("isPlaying") as? Bool) ?? lastIsPlaying
+        let fallback = queue.sync { (lastPlaybackSpeed, lastIsPlaying) }
+        let playbackSpeed: Double = (safeValue("playbackSpeed") as? NSNumber)?.doubleValue ?? fallback.0
+        let isPlaying: Bool = (safeValue("isPlaying") as? Bool) ?? fallback.1
 
         // A state whose item is not a music track (podcast episode, ad, local file)
         // means the previous track's lyrics no longer apply.
@@ -94,7 +99,31 @@ final class KaraokePlaybackTracker {
         queue.async {
             let elapsed = self.lastPositionStamp == 0 ? 0 : max(0, receivedAt - self.lastPositionStamp)
             let changedTrack = trackId != nil && trackId != self.observedTrackId
-            self.lastPosition = positionRaw ?? (changedTrack ? 0 : self.lastPosition + (self.lastIsPlaying ? elapsed * self.lastPlaybackSpeed : 0))
+            let applied = self.lastIsPlaying && self.lastPlaybackSpeed > 0 ? min(abs(self.positionCorrection), elapsed * abs(self.correctionRate)) * (self.positionCorrection < 0 ? -1 : 1) : 0
+            let projected = self.lastPosition + (self.lastIsPlaying ? elapsed * self.lastPlaybackSpeed : 0) + applied
+            let error = (positionRaw ?? projected) - projected
+            let awaitingSeek = self.seekIssuedAt > 0 && receivedAt - self.seekIssuedAt < 1 && abs(error) > 0.75 && !changedTrack
+            if awaitingSeek {
+                self.lastPosition = projected
+                self.positionCorrection = 0
+            } else if !changedTrack, self.lastIsPlaying, isPlaying, let measured = positionRaw,
+                      self.lastReportedPosition.map({ abs($0 - measured) < 0.001 }) == true {
+                self.lastPosition = projected
+                self.positionCorrection -= applied
+            } else if !changedTrack, self.lastIsPlaying, isPlaying, playbackSpeed > 0, positionRaw != nil, abs(error) < 0.35 {
+                self.lastPosition = projected
+                self.positionCorrection = error
+                self.correctionRate = min(0.25, max(-0.25, error / 0.3))
+                self.seekIssuedAt = 0
+            } else {
+                self.lastPosition = positionRaw ?? (changedTrack ? 0 : projected)
+                self.positionCorrection = 0
+                self.correctionRate = 0
+                self.seekIssuedAt = 0
+            }
+            if !awaitingSeek, let positionRaw { self.lastReportedPosition = positionRaw }
+            else if changedTrack { self.lastReportedPosition = nil }
+
             self.lastPositionStamp = receivedAt
             self.lastPlaybackSpeed = playbackSpeed
             self.lastIsPlaying = isPlaying
@@ -149,6 +178,9 @@ final class KaraokePlaybackTracker {
         queue.async {
             self.lastPosition = Double(target) / 1000
             self.lastPositionStamp = self.uptimeSec()
+            self.seekIssuedAt = self.lastPositionStamp
+            self.positionCorrection = 0
+            self.correctionRate = 0
         }
         writeDebugLog("[Karaoke] tap seek to \(target)ms")
         return true
@@ -164,7 +196,8 @@ final class KaraokePlaybackTracker {
             let estSeconds = lastIsPlaying
                 ? lastPosition + elapsed * lastPlaybackSpeed
                 : lastPosition
-            return Int(max(0, estSeconds) * 1000)
+            let correction = lastIsPlaying && lastPlaybackSpeed > 0 ? min(abs(positionCorrection), elapsed * abs(correctionRate)) * (positionCorrection < 0 ? -1 : 1) : 0
+            return Int(max(0, estSeconds + correction) * 1000)
         }
     }
 

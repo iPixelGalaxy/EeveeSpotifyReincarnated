@@ -35,6 +35,8 @@ struct KaraokeLineView: View {
     var onSeek: () -> Void
     @StateObject private var textCache = KaraokeTextPlanCache()
 
+    private var singing: Bool { isActiveLine && currentMs >= layout.startMs && currentMs < layout.endMs }
+
     var body: some View {
         Group {
             if layout.isInterlude {
@@ -46,14 +48,14 @@ struct KaraokeLineView: View {
             } else {
                 let plan = textCache.plan(words: layout.words, width: availableWidth, fontSize: fontSize,
                                           alignment: alignment, rtl: layout.isRTL)
-                KaraokeShapedText(plan: plan, currentMs: currentMs, active: isActiveLine, onSeek: onSeek)
+                KaraokeShapedText(plan: plan, currentMs: currentMs, active: singing, onSeek: onSeek)
                     .frame(width: availableWidth, height: plan.height)
             }
         }
         .frame(width: availableWidth)
-        .opacity(isActiveLine ? 1 : (distance < 0 ? 0.46 : 0.56))
-        .blur(radius: isActiveLine ? 0 : min(1, CGFloat(abs(distance)) * CGFloat(blurIntensity) * 0.1))
-        .animation(.easeOut(duration: 0.2), value: isActiveLine)
+        .opacity(singing ? 1 : (currentMs >= layout.endMs || distance < 0 ? 0.46 : 0.56))
+        .blur(radius: singing ? 0 : min(1, CGFloat(abs(distance)) * CGFloat(blurIntensity) * 0.1))
+        .animation(.easeOut(duration: 0.2), value: singing)
     }
 }
 

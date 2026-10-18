@@ -227,3 +227,26 @@ class KaraokeVideoSwitchHook: ClassHook<UIView> {
         KaraokeOverlayPresenter.suppressVideoSwitch(target)
     }
 }
+
+// Scope native visibility/style writes to the instances pinned during compact mode.
+class KaraokeCompactVisibilityHook: ClassHook<UIView> {
+    typealias Group = KaraokeFooterGroup
+    @objc(setAlpha:) func setAlpha(_ alpha: CGFloat) {
+        orig.setAlpha(KaraokeOverlayPresenter.lockedCompactAlpha(alpha, in: target))
+    }
+    @objc(setHidden:) func setHidden(_ hidden: Bool) {
+        orig.setHidden(KaraokeOverlayPresenter.lockedCompactHidden(hidden, in: target))
+    }
+    @objc(setClipsToBounds:) func setClipsToBounds(_ clips: Bool) {
+        orig.setClipsToBounds(KaraokeOverlayPresenter.lockedCompactClipping(clips, in: target))
+    }
+    @objc(setUserInteractionEnabled:) func setUserInteractionEnabled(_ enabled: Bool) {
+        orig.setUserInteractionEnabled(KaraokeOverlayPresenter.lockedCompactAlpha(enabled ? 1 : 0, in: target) > 0)
+    }
+    @objc(setTransform:) func setTransform(_ transform: CGAffineTransform) {
+        orig.setTransform(KaraokeOverlayPresenter.lockedCompactTransform(transform, in: target))
+    }
+    func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        orig.point(inside: point, with: event) || KaraokeOverlayPresenter.compactHit(point, in: target)
+    }
+}
