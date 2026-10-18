@@ -49,6 +49,8 @@ struct EeveeLyricsSettingsView: View {
                 isOn: $karaokeOptions.enabled
             )
 
+            Toggle("allow_screen_recording".localized, isOn: $karaokeOptions.allowScreenRecording)
+
             if karaokeOptions.enabled {
                 Picker("karaoke_alignment".localized, selection: $karaokeOptions.textAlignment) {
                     ForEach(KaraokeTextAlignment.allCases, id: \.self) { alignment in
@@ -69,6 +71,18 @@ struct EeveeLyricsSettingsView: View {
                             .foregroundColor(.gray)
                     }
                     Slider(value: $karaokeOptions.blurIntensity, in: 0...4, step: 0.1)
+                }
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack {
+                        Text("karaoke_timing_offset".localized)
+                        Spacer()
+                        Text(String(format: "%+.0f ms", karaokeOptions.timingOffsetMs)).font(.system(size: 16, design: .monospaced))
+                    }
+                    Slider(value: $karaokeOptions.timingOffsetMs, in: -3000...3000, step: 25)
+                    Text("karaoke_timing_offset_help".localized).font(.caption).foregroundColor(.gray)
+                    if karaokeOptions.timingOffsetMs != 0 {
+                        Button("karaoke_timing_reset".localized) { karaokeOptions.timingOffsetMs = 0 }
+                    }
                 }
             }
         } header: {

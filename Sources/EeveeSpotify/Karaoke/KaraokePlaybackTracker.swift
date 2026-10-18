@@ -82,7 +82,7 @@ final class KaraokePlaybackTracker {
             ? String(uriString.dropFirst("spotify:track:".count))
             : nil
 
-        let positionRaw: Double = (safeValue("position") as? NSNumber)?.doubleValue ?? lastPosition
+        let positionRaw = (safeValue("position") as? NSNumber)?.doubleValue
         let playbackSpeed: Double = (safeValue("playbackSpeed") as? NSNumber)?.doubleValue ?? lastPlaybackSpeed
         let isPlaying: Bool = (safeValue("isPlaying") as? Bool) ?? lastIsPlaying
 
@@ -90,9 +90,12 @@ final class KaraokePlaybackTracker {
         // means the previous track's lyrics no longer apply.
         let isNonTrackItem = trackId == nil && !uriString.isEmpty
 
+        let receivedAt = uptimeSec()
         queue.async {
-            self.lastPosition = positionRaw
-            self.lastPositionStamp = self.uptimeSec()
+            let elapsed = self.lastPositionStamp == 0 ? 0 : max(0, receivedAt - self.lastPositionStamp)
+            let changedTrack = trackId != nil && trackId != self.observedTrackId
+            self.lastPosition = positionRaw ?? (changedTrack ? 0 : self.lastPosition + (self.lastIsPlaying ? elapsed * self.lastPlaybackSpeed : 0))
+            self.lastPositionStamp = receivedAt
             self.lastPlaybackSpeed = playbackSpeed
             self.lastIsPlaying = isPlaying
 

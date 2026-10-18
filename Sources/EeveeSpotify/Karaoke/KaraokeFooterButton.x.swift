@@ -25,7 +25,7 @@ enum KaraokeFooterButton {
 
     private static let button: UIButton = {
         let button = UIButton(type: .custom)
-        button.setImage(SpicyLyricsBrand.image(), for: .normal)
+        button.setImage(SpotifyLyricsIcon.image(), for: .normal)
         button.tintColor = UIColor(white: 1, alpha: 0.85)
         button.backgroundColor = .clear
         button.layer.borderWidth = 0
@@ -58,6 +58,23 @@ enum KaraokeFooterButton {
         if button.superview !== row {
             button.removeFromSuperview()
             row.insertArrangedSubview(button, at: max(0, row.arrangedSubviews.count - 2))
+        }
+        if [PlayerPart.share, .queue, .fullScreen].allSatisfy(UserDefaults.playerOptions.hiddenParts.contains) {
+            if let index = row.arrangedSubviews.firstIndex(of: button) {
+                for view in row.arrangedSubviews.dropFirst(index + 1) { view.isHidden = true }
+            }
+            let bottom = row.convert(row.bounds, to: root).maxY
+            var queue = root.subviews
+            while !queue.isEmpty {
+                let view = queue.removeFirst()
+                queue.append(contentsOf: view.subviews)
+                guard view !== row, !row.isDescendant(of: view), !view.isDescendant(of: row),
+                      view.bounds.height > 0, view.convert(view.bounds, to: root).minY >= bottom - 1 else { continue }
+                view.alpha = 0
+                view.isUserInteractionEnabled = false
+                view.accessibilityElementsHidden = true
+                if let stack = view.superview as? UIStackView, stack.arrangedSubviews.contains(view) { view.isHidden = true }
+            }
         }
         update()
     }
@@ -137,5 +154,23 @@ class KaraokeInformationUnitHook: ClassHook<UIViewController> {
     func viewDidLayoutSubviews() {
         orig.viewDidLayoutSubviews()
         if let view = target.viewIfLoaded { KaraokeOverlayPresenter.registerInformation(view) }
+    }
+}
+
+class KaraokeControlsUnitHook: ClassHook<UIViewController> {
+    typealias Group = KaraokeFooterGroup
+    static let targetName = "_TtC20NowPlaying_ModesImpl28PlaybackControlsElementsUnit"
+    func viewDidLayoutSubviews() {
+        orig.viewDidLayoutSubviews()
+        if let view = target.viewIfLoaded { KaraokeOverlayPresenter.registerControls(view) }
+    }
+}
+
+class KaraokeDurationUnitHook: ClassHook<UIViewController> {
+    typealias Group = KaraokeFooterGroup
+    static let targetName = "_TtC20NowPlaying_ModesImpl19DurationElementUnit"
+    func viewDidLayoutSubviews() {
+        orig.viewDidLayoutSubviews()
+        if let view = target.viewIfLoaded { KaraokeOverlayPresenter.registerDuration(view) }
     }
 }

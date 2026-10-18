@@ -65,12 +65,13 @@ private struct KaraokeWordView: View {
     let isRTL: Bool
     let fontSize: CGFloat
     @State private var motion = KaraokeWordMotion()
+    @State private var syllableMotions: [KaraokeWordMotion] = []
 
     private var startMs: Int { syllables.first?.startMs ?? 0 }
     private var endMs: Int { syllables.last?.endMs ?? startMs }
     private var letters: [Character] { Array(syllables.map(\.text).joined()) }
     // Match the plugin's default held-word threshold. Preserve joining scripts as shaped text.
-    private var emphasizesLetters: Bool { !isRTL && endMs - startMs >= 1000 && letters.count > 1 }
+    private var emphasizesLetters: Bool { syllables.count == 1 && !isRTL && endMs - startMs >= 1000 && letters.count > 1 }
 
     var body: some View {
         HStack(spacing: 0) {
@@ -88,7 +89,8 @@ private struct KaraokeWordView: View {
                     .shadow(color: .white.opacity(min(1, max(0, sample.glow * 1.85))), radius: CGFloat(4 + 12 * max(0, sample.glow)))
                 }
             } else {
-                ForEach(Array(syllables.enumerated()), id: \.offset) { _, syllable in
+                ForEach(Array(syllables.enumerated()), id: \.offset) { index, syllable in
+                    let sample = index < syllableMotions.count ? syllableMotions[index].word : KaraokeMotionSample()
                     KaraokeLyricText(
                         text: syllable.text,
                         progress: syllable.endMs > syllable.startMs
@@ -96,18 +98,31 @@ private struct KaraokeWordView: View {
                             : (currentMs >= syllable.startMs ? 1 : 0),
                         active: isActiveLine, isRTL: isRTL, fontSize: fontSize
                     )
+                    .scaleEffect(syllables.count > 1 ? sample.scale : 1, anchor: .bottom)
+                    .offset(y: syllables.count > 1 ? CGFloat(sample.offset) * fontSize : 0)
+                    .shadow(color: .white.opacity(syllables.count > 1 ? min(1, max(0, sample.glow)) : 0), radius: 8)
+                    .transaction { $0.animation = nil }
                 }
             }
         }
-        .scaleEffect(motion.word.scale)
-        .offset(y: CGFloat(motion.word.offset) * fontSize)
-        .shadow(color: .white.opacity(min(1, max(0, motion.word.glow))), radius: CGFloat(3 + 6 * max(0, motion.word.glow)))
+        .scaleEffect(syllables.count == 1 ? motion.word.scale : 1)
+        .offset(y: syllables.count == 1 ? CGFloat(motion.word.offset) * fontSize : 0)
+        .shadow(color: .white.opacity(syllables.count == 1 ? min(1, max(0, motion.word.glow)) : 0), radius: CGFloat(3 + 6 * max(0, motion.word.glow)))
+        .transaction { $0.animation = nil }
         .onAppear { updateMotion() }
         .onChange(of: currentMs) { _ in updateMotion() }
         .onChange(of: isActiveLine) { _ in updateMotion() }
     }
 
     private func updateMotion() {
+        if syllables.count > 1 {
+            if syllableMotions.count != syllables.count { syllableMotions = syllables.map { _ in KaraokeWordMotion() } }
+            for index in syllables.indices {
+                let syllable = syllables[index]
+                syllableMotions[index].update(currentMs: currentMs, startMs: syllable.startMs, endMs: syllable.endMs,
+                    letterCount: 0, active: isActiveLine, stamp: ProcessInfo.processInfo.systemUptime)
+            }
+        }
         motion.update(currentMs: currentMs, startMs: startMs, endMs: endMs,
                       letterCount: emphasizesLetters ? letters.count : 0,
                       active: isActiveLine, stamp: ProcessInfo.processInfo.systemUptime)
@@ -156,16 +171,16 @@ private struct KaraokeInterludeView: View {
 
     var body: some View {
         let duration = Double(max(1, endMs - startMs)) / 3
-        HStack(spacing: fontSize * 0.22) {
+        HStack(spacing: fontSize * 0.4) {
             ForEach(0..<3) { index in
                 let progress = min(1, max(0, (Double(currentMs - startMs) - Double(index) * duration) / duration))
                 Circle()
                     .fill(Color.white)
-                    .frame(width: fontSize * 0.26, height: fontSize * 0.26)
+                    .frame(width: fontSize * 0.5, height: fontSize * 0.5)
                     .scaleEffect(Self.scale.value(at: progress))
                     .offset(y: fontSize * Self.lift.value(at: progress))
                     .opacity(Self.opacity.value(at: progress))
-                    .shadow(color: .white.opacity(progress > 0 && progress < 1 ? 0.45 : 0), radius: 6)
+                    .shadow(color: .white.opacity(progress > 0 && progress < 1 ? 0.45 : 0), radius: 15)
             }
         }
         .frame(height: fontSize * 1.25)

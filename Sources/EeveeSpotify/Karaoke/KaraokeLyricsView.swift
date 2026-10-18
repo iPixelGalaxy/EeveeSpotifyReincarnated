@@ -51,10 +51,10 @@ struct KaraokeLyricsView: View {
                             }
                         }
                         .foregroundColor(.white)
+                        .font(.system(size: 20.8))
                         .padding(32)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
-                    closeButton
                 }
                 .frame(width: frame.width, height: frame.height)
                 .clipped()
@@ -64,6 +64,16 @@ struct KaraokeLyricsView: View {
         // UIKit already supplies a viewport in the Canvas view's coordinates.
         .ignoresSafeArea()
         .preferredColorScheme(.dark)
+        .accessibilityAction(.escape) { onDismiss() }
+        .simultaneousGesture(TapGesture().onEnded { KaraokeOverlayPresenter.interact() })
+        .simultaneousGesture(DragGesture(minimumDistance: 20)
+            .onChanged { _ in KaraokeOverlayPresenter.interact(dragging: true) }
+            .onEnded { value in
+                if value.startLocation.y < UIScreen.main.bounds.height * 0.35,
+                   value.translation.height > 70, value.translation.height > abs(value.translation.width) {
+                    onDismiss()
+                } else { KaraokeOverlayPresenter.interact() }
+            })
         .onReceive(NotificationCenter.default.publisher(for: .eeveeKaraokeOptionsChanged)) { _ in
             let updated = UserDefaults.karaokeOptions
             if options != updated { options = updated }
@@ -73,7 +83,7 @@ struct KaraokeLyricsView: View {
 
     private func content(lyrics: KaraokeLyricsDto, layouts: [KaraokeLineLayout], size: CGSize) -> some View {
         TimelineView(.periodic(from: .now, by: 1.0 / 60.0)) { _ in
-            let currentMs = KaraokePlaybackTracker.shared.currentPositionMs()
+            let currentMs = KaraokePlaybackTracker.shared.currentPositionMs() + Int(options.timingOffsetMs)
 
             KaraokeScrollingLines(
                 lyrics: lyrics,
@@ -96,26 +106,7 @@ struct KaraokeLyricsView: View {
         return nil
     }
 
-    @ViewBuilder private var closeButtonBackground: some View {
-        if KaraokeGlass.isEnabled {
-            KaraokeGlassCapsule()
-        } else {
-            Circle().fill(Color.white.opacity(0.12))
-        }
-    }
 
-    private var closeButton: some View {
-        Button(action: onDismiss) {
-            Image(systemName: "xmark")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(.white.opacity(0.85))
-                .padding(10)
-                .background(closeButtonBackground)
-        }
-        .accessibilityLabel(Text("Close lyrics"))
-        .padding(.top, 8)
-        .padding(.trailing, 8)
-    }
 }
 
 @available(iOS 15.0, *)
@@ -132,9 +123,10 @@ private struct KaraokeScrollingLines: View {
     @State private var resumeAt = Date.distantPast
     @State private var creditsAtBottom = false
     @State private var creditsTopPadding: CGFloat = 0
+    @State private var naturalContentHeight: CGFloat = .infinity
 
     private var horizontalPadding: CGFloat { max(20, size.width * 0.05) }
-    private var fontSize: CGFloat { min(36, max(28, size.width * 0.075)) }
+    private var fontSize: CGFloat { 1.3 * min(36, max(28, size.width * 0.075)) }
     private var focus: UnitPoint { UnitPoint(x: 0.5, y: options.reversedDirection ? 0.75 : 0.25) }
 
     var body: some View {
@@ -161,7 +153,7 @@ private struct KaraokeScrollingLines: View {
                         )
                         .contentShape(Rectangle())
                         .onTapGesture {
-                            guard KaraokePlaybackTracker.shared.seek(toMs: layout.startMs) else {
+                            guard KaraokePlaybackTracker.shared.seek(toMs: max(0, layout.startMs - Int(options.timingOffsetMs))) else {
                                 UINotificationFeedbackGenerator().notificationOccurred(.error)
                                 return
                             }
@@ -181,6 +173,7 @@ private struct KaraokeScrollingLines: View {
 
                     KaraokeCreditsFooterView(lyrics: lyrics)
                         .padding(.top, creditsTopPadding)
+                        .padding(.bottom, fontSize * 1.1)
                         .background(GeometryReader { geometry in
                             Color.clear.preference(key: KaraokeCreditsBottomKey.self,
                                 value: geometry.frame(in: .named("KaraokeLyricsScroll")).maxY)
@@ -201,8 +194,12 @@ private struct KaraokeScrollingLines: View {
             .onPreferenceChange(KaraokeContentBottomKey.self) { bottom in
                 guard bottom.isFinite else { return }
                 // For short songs, fill above credits rather than leaving empty space below them.
-                let padding = max(0, size.height - (bottom - creditsTopPadding))
+                naturalContentHeight = bottom - creditsTopPadding
+                let padding = max(0, size.height - naturalContentHeight)
                 if abs(padding - creditsTopPadding) > 0.5 { creditsTopPadding = padding }
+            }
+            .onChange(of: size.height) { height in
+                if naturalContentHeight.isFinite { creditsTopPadding = max(0, height - naturalContentHeight) }
             }
             .mask(
                 LinearGradient(stops: [
@@ -214,12 +211,14 @@ private struct KaraokeScrollingLines: View {
             )
             .simultaneousGesture(DragGesture(minimumDistance: 8)
                 .onChanged { _ in
+                    KaraokeOverlayPresenter.interact(dragging: true)
                     isDragging = true
                     isBrowsing = true
                 }
                 .onEnded { _ in
+                    KaraokeOverlayPresenter.interact()
                     isDragging = false
-                    resumeAt = Date().addingTimeInterval(5)
+                    resumeAt = Date().addingTimeInterval(3)
                 }
             )
             .onAppear {

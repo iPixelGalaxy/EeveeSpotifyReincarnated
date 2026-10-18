@@ -15,6 +15,79 @@ final class KaraokeOverlayPresenter {
     private static var hosting: UIViewController?
     private static var container: KaraokeCanvasContainer?
     private static let viewport = KaraokeViewport()
+    private static weak var controls: UIView?
+    private static weak var duration: UIView?
+    private static var idleWork: DispatchWorkItem?
+    private static let activityObserver = NotificationCenter.default.addObserver(
+        forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main
+    ) { _ in
+        if isPresented && isEnabled && !focused { interact() }
+    }
+    private static var focused = false
+    private static var focusShift: CGFloat = 0
+    private struct NativeState {
+        weak var view: UIView?
+        let alpha: CGFloat
+        let transform: CGAffineTransform
+        let interactive: Bool
+        init(_ view: UIView) { self.view = view; alpha = view.alpha; transform = view.transform; interactive = view.isUserInteractionEnabled }
+    }
+    private static var nativeStates: [ObjectIdentifier: NativeState] = [:]
+
+    static func registerControls(_ view: UIView) { controls = view }
+    static func registerDuration(_ view: UIView) { duration = view }
+
+    static func interact(dragging: Bool = false) {
+        idleWork?.cancel()
+        setFocused(false)
+        guard isPresented, isEnabled, !dragging else { return }
+        let work = DispatchWorkItem {
+            if isPresented && isEnabled && UIApplication.shared.applicationState == .active && !UIAccessibility.isVoiceOverRunning { setFocused(true) }
+        }
+        idleWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: work)
+    }
+
+    private static func setFocused(_ value: Bool) {
+        guard focused != value else { return }
+        focused = value
+        if value, let canvas, let window = canvas.window, let information,
+           let infoFrame = unitFrame(information, in: window), infoFrame.intersects(window.bounds) {
+            for view in [information, duration, controls, footer].compactMap({ $0 }) {
+                nativeStates[ObjectIdentifier(view)] = NativeState(view)
+            }
+            let end = duration.flatMap { unitFrame($0, in: window)?.maxY } ?? infoFrame.maxY
+            focusShift = max(0, window.safeAreaLayoutGuide.layoutFrame.maxY - 8 - end)
+            UIView.animate(withDuration: 0.3, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction]) {
+                for view in [information, duration].compactMap({ $0 }) {
+                    if let saved = nativeStates[ObjectIdentifier(view)] {
+                        let vector = view.superview?.convert(CGPoint(x: 0, y: focusShift), from: window) ?? CGPoint(x: 0, y: focusShift)
+                        let origin = view.superview?.convert(CGPoint.zero, from: window) ?? .zero
+                        var transform = saved.transform
+                        transform.tx += vector.x - origin.x
+                        transform.ty += vector.y - origin.y
+                        view.transform = transform
+                    }
+                }
+                for view in [controls, footer].compactMap({ $0 }) { view.alpha = 0; view.isUserInteractionEnabled = false }
+                updateFrame()
+            }
+        } else {
+            if value { focused = false }
+            let saved = Array(nativeStates.values)
+            nativeStates.removeAll()
+            focusShift = 0
+            UIView.animate(withDuration: 0.25, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction]) {
+                for state in saved {
+                    state.view?.transform = state.transform
+                    state.view?.alpha = state.alpha
+                    state.view?.isUserInteractionEnabled = state.interactive
+                }
+                updateFrame()
+            }
+        }
+    }
+
     static let coverClass = "_TtC35NowPlaying_ContentLayerPlatformImpl24AccessibleCollectionView"
 
     static func registerPlayer(_ root: UIView) {
@@ -69,7 +142,32 @@ final class KaraokeOverlayPresenter {
         return CGRect(x: 0, y: top - canvas.bounds.minY, width: canvas.bounds.width, height: bottom - top)
     }
 
+    private static func refreshFocusGeometry() {
+        guard focused, let canvas, let window = canvas.window, let information else { return }
+        let endView = duration ?? information
+        guard let endFrame = unitFrame(endView, in: window),
+              let savedEnd = nativeStates[ObjectIdentifier(endView)] else { return }
+        let target = window.safeAreaLayoutGuide.layoutFrame.maxY - 8
+        guard abs(endFrame.maxY - target) > 1 else { return }
+        // Spotify can change its own Canvas layout while focused; measure its new baseline.
+        let translation = CGPoint(x: endView.transform.tx - savedEnd.transform.tx,
+                                  y: endView.transform.ty - savedEnd.transform.ty)
+        let moved = endView.superview?.convert(translation, to: window) ?? translation
+        let origin = endView.superview?.convert(CGPoint.zero, to: window) ?? .zero
+        focusShift = max(0, target - (endFrame.maxY - (moved.y - origin.y)))
+        for view in [information, duration].compactMap({ $0 }) {
+            guard let saved = nativeStates[ObjectIdentifier(view)] else { continue }
+            let shifted = view.superview?.convert(CGPoint(x: 0, y: focusShift), from: window) ?? CGPoint(x: 0, y: focusShift)
+            let zero = view.superview?.convert(CGPoint.zero, from: window) ?? .zero
+            var transform = saved.transform
+            transform.tx += shifted.x - zero.x
+            transform.ty += shifted.y - zero.y
+            view.transform = transform
+        }
+    }
+
     private static func updateFrame() {
+        refreshFocusGeometry()
         guard let canvas, let container, let hosting else { return }
         guard canvas.window != nil, let frame = lyricsFrame(in: canvas) else {
             container.isHidden = true
@@ -81,7 +179,7 @@ final class KaraokeOverlayPresenter {
         container.activeRect = frame
         if viewport.frame != frame { viewport.frame = frame }
         // Some player versions nest the foreground units inside the Canvas controller.
-        for unit in [header, information, footer].compactMap({ $0 }) {
+        for unit in [header, information, duration, controls, footer].compactMap({ $0 }) {
             var branch = unit
             while let parent = branch.superview, parent !== canvas { branch = parent }
             if branch.superview === canvas, branch !== container,
@@ -128,7 +226,13 @@ final class KaraokeOverlayPresenter {
     }
 
     private static func show() -> Bool {
-        if isPresented { return true }
+        _ = activityObserver
+        if isPresented {
+            container?.layer.removeAllAnimations()
+            container?.alpha = 1
+            interact()
+            return true
+        }
         guard #available(iOS 15.0, *), let canvas, canvas.window != nil,
               let frame = lyricsFrame(in: canvas), UserDefaults.karaokeOptions.enabled,
               UserDefaults.lyricsSource.supportsCustomLyricsView else { return false }
@@ -151,21 +255,31 @@ final class KaraokeOverlayPresenter {
         plane.addSubview(child.view)
         child.view.frame = plane.bounds
         child.didMove(toParent: controller)
+        plane.alpha = 0
+        UIView.animate(withDuration: 0.25) { plane.alpha = 1 }
         container = plane
         hosting = child
         isPresented = true
         retryCount = 0
         updateFrame()
+        interact()
         writeDebugLog("[Karaoke] Canvas replacement mounted; lyrics viewport \(frame)")
         return true
     }
 
     static func dismiss() {
         setEnabled(false)
-        removeHosting()
+        idleWork?.cancel()
+        setFocused(false)
+        guard let container else { removeHosting(); return }
+        UIView.animate(withDuration: 0.2, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction]) {
+            container.alpha = 0
+        } completion: { _ in if !isEnabled { removeHosting() } }
     }
 
     private static func removeHosting() {
+        idleWork?.cancel()
+        setFocused(false)
         guard let hosting else { return }
         hosting.willMove(toParent: nil)
         hosting.view.removeFromSuperview()

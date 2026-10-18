@@ -8,15 +8,16 @@ struct PlayerCardsDeclutterGroup: HookGroup {}
 struct PlayerAssistantDeclutterGroup: HookGroup {}
 
 enum PlayerPart: String, CaseIterable, Codable {
-    case lyricsPreview, shuffle, `repeat`, addTo, queue, share, connect
+    case fullScreen, lyricsPreview, shuffle, `repeat`, addTo, queue, share, connect
     case talkAboutSong, aboutSong, artistCircles
     case allCards, lyricsCard, aboutArtist, relatedVideos, songDNA, liveEvents, exploreArtist, releaseCountdown, credits, merch, recommendations
 
-    static let buttons: [PlayerPart] = [.lyricsPreview, .shuffle, .repeat, .addTo, .queue, .share, .connect]
+    static let buttons: [PlayerPart] = [.fullScreen, .lyricsPreview, .shuffle, .repeat, .addTo, .queue, .share, .connect]
     static let cards: [PlayerPart] = [.allCards, .talkAboutSong, .aboutSong, .artistCircles, .lyricsCard, .aboutArtist, .relatedVideos, .songDNA, .liveEvents, .exploreArtist, .releaseCountdown, .credits, .merch, .recommendations]
 
     var buttonIds: [String] {
         switch self {
+        case .fullScreen: return ["FullscreenButton", "NowPlayingFullscreenButton", "NowPlaying-FullscreenButton"]
         case .shuffle: return ["Components.UI.ShuffleButton"]
         case .repeat: return ["Nowplaying-RepeatButton"]
         case .share: return ["ShareButtonNowPlayingView"]
@@ -78,6 +79,8 @@ enum PlayerDeclutter {
         for item in row(in: unit) where item.alpha != 0 {
             let id = item.accessibilityIdentifier ?? item.eeveeFirst(UIView.self) { $0.accessibilityIdentifier != nil }?.accessibilityIdentifier
             if let id, hiddenIds.contains(id) { vanish(item) }
+            let identity = ((id ?? "") + (item.accessibilityLabel ?? "")).lowercased()
+            if hidden.contains(.fullScreen), identity.contains("fullscreen") || identity.contains("full screen") { vanish(item) }
         }
     }
 
@@ -369,6 +372,14 @@ class PlayerLyricsPreviewHook: ClassHook<UIView> {
 }
 
 func activatePlayerDeclutter() {
+    if !UserDefaults.standard.bool(forKey: "eeveeTrimmedLyricsFooterV1") {
+        var options = UserDefaults.playerOptions
+        for part in [PlayerPart.share, .queue, .fullScreen, .lyricsPreview, .lyricsCard] where !options.hiddenParts.contains(part) {
+            options.hiddenParts.append(part)
+        }
+        UserDefaults.playerOptions = options
+        UserDefaults.standard.set(true, forKey: "eeveeTrimmedLyricsFooterV1")
+    }
     let hidden = PlayerDeclutter.hidden
     guard !hidden.isEmpty else { return }
     let start = CFAbsoluteTimeGetCurrent()

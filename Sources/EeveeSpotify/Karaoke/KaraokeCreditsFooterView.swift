@@ -21,13 +21,13 @@ struct KaraokeCreditsFooterView: View {
         VStack(alignment: .leading, spacing: 8) {
             if !lyrics.songWriters.isEmpty {
                 Text("\("lyrics_written_by".localized) \(lyrics.songWriters.joined(separator: ", "))")
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.system(size: 19.5, weight: .semibold))
                     .foregroundColor(.white.opacity(0.6))
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let provider = providerLabel {
                 Text("\("lyrics_provided_by".localized): \(provider)")
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.system(size: 19.5, weight: .semibold))
                     .foregroundColor(.white.opacity(0.5))
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -75,13 +75,13 @@ private struct KaraokeContributorCredit: View {
             if let url = remoteURL(avatar) {
                 AsyncImage(url: url) { image in image.resizable().scaledToFill() }
                 placeholder: { Color.clear }
-                    .frame(width: 20, height: 20)
+                    .frame(width: 26, height: 26)
                     .clipShape(Circle())
                     .alignmentGuide(.firstTextBaseline) { $0.height * 0.78 }
                     .accessibilityLabel(Text(currentName))
             }
         }
-        .font(.system(size: 15, weight: .semibold))
+        .font(.system(size: 19.5, weight: .semibold))
         .task(id: link) {
             let updated = await KaraokeProfileResolver.shared.username(profileURL: link)
             if !Task.isCancelled { resolvedName = updated }

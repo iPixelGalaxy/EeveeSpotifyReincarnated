@@ -546,3 +546,11 @@ restart_later = "Later";
 "player_part_talkAboutSong" = "Talk about this song";
 "player_part_aboutSong" = "About this song";
 "player_part_artistCircles" = "Artist circles";
+
+"karaoke_timing_offset" = "Lyrics offset";
+"karaoke_timing_offset_help" = "Positive values show lyrics earlier; negative values show them later.";
+"karaoke_timing_reset" = "Reset offset";
+
+"player_part_fullScreen" = "Fullscreen control";
+
+"allow_screen_recording" = "Allow screen recording during playback";

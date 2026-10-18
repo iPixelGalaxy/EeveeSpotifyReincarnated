@@ -250,20 +250,15 @@ class SpicyLyricsRepository: LyricsRepository {
                               isOppositeAligned: opposite, isBackground: isBackground)
     }
 
-    // Keep each voice ordered internally; simultaneous voices must retain their own timestamps.
+    // Preserve source onsets, including intentional overlaps; only repair negative durations.
     private static func normalizeMonotonicTiming(_ lines: [KaraokeLineDto]) -> [KaraokeLineDto] {
         var result = lines
         for lineIndex in result.indices {
-            var previousEndMs = Int.min
             for syllableIndex in result[lineIndex].syllables.indices {
                 var syllable = result[lineIndex].syllables[syllableIndex]
-                if syllable.startMs < previousEndMs {
-                    syllable.startMs = previousEndMs
-                }
                 if syllable.endMs < syllable.startMs {
                     syllable.endMs = syllable.startMs
                 }
-                previousEndMs = syllable.endMs
                 result[lineIndex].syllables[syllableIndex] = syllable
             }
         }
@@ -401,7 +396,7 @@ class SpicyLyricsRepository: LyricsRepository {
         if root["source"]?.stringValue == "spicy_lyrics" || root["TTMLUploadMetadata"] != nil || root["UploadAttribution"] != nil {
             return "Spicy Lyrics Community"
         }
-        return providerName
+        return "Apple Music"
     }
 
     private static func providerCredit(_ root: SpicyLyricsJSON) -> String? {
