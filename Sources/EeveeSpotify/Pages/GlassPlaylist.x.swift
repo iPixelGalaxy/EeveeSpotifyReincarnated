@@ -430,7 +430,7 @@ class PlaylistArtworkHook: ClassHook<UIView> {
     static let targetName = "_TtC19LegacyUI_ECMCoreKit15ShadowContainer"
 
     func setAlpha(_ alpha: CGFloat) {
-        guard #available(iOS 26.0, *), GlassPlaylist.options.fullCover, !LandscapePlaylistHeader.isLandscape(target),
+        guard #available(iOS 26.0, *), GlassPlaylist.options.fullCover || LandscapePlaylistHeader.isLandscape(target),
               target.accessibilityIdentifier == "Components.Header.UI.ArtworkImage", PlaylistHeader.contains(target) else {
             orig.setAlpha(alpha)
             return

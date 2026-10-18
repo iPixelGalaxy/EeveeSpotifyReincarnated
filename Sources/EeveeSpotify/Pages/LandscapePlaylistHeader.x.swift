@@ -15,6 +15,8 @@ enum LandscapePlaylistHeader {
         let viewport: NativeViewPlacement
         let list: NativeViewPlacement?
         let cover = UIImageView()
+        private var coverObservations = [NSKeyValueObservation]()
+        private let coverSources = NSHashTable<UIImageView>.weakObjects()
         let inset: UIEdgeInsets
         let indicators: UIEdgeInsets
         let adjustment: UIScrollView.ContentInsetAdjustmentBehavior
@@ -32,7 +34,30 @@ enum LandscapePlaylistHeader {
             (root.next as? UIViewController)?.traitOverrides.horizontalSizeClass = .compact
             objc_setAssociatedObject(list, &pageRootKey, PageLookup.WeakView(root), .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
         }
+        func track(_ sources: [UIImageView]) {
+            let previous = coverSources.allObjects
+            guard previous.count != sources.count || sources.contains(where: { source in !previous.contains(where: { $0 === source }) }) else { return }
+            coverObservations.removeAll(); coverSources.removeAllObjects()
+            sources.forEach { coverSources.add($0) }
+            coverObservations = sources.map { source in
+                source.observe(\.image, options: [.initial, .new]) { [weak self] _, _ in
+                    DispatchQueue.main.async { [weak self] in self?.updateCover() }
+                }
+            }
+        }
+        private func updateCover() {
+            func score(_ view: UIImageView) -> CGFloat {
+                guard let image = view.image else { return -1 }
+                let pixels = CGFloat(image.cgImage?.width ?? 0) * CGFloat(image.cgImage?.height ?? 0)
+                let square = min(image.size.width, image.size.height) / max(1, max(image.size.width, image.size.height))
+                return (view.contentMode == .scaleAspectFill || view.contentMode == .scaleAspectFit ? 1_000_000 : 0) + pixels * square
+            }
+            // Watch every candidate: the cover can arrive after the shadow and placeholder.
+            if let image = coverSources.allObjects.filter({ $0.image != nil }).max(by: { score($0) < score($1) })?.image,
+               cover.image !== image { cover.image = image }
+        }
         func restore() {
+            coverObservations.removeAll(); coverSources.removeAllObjects()
             let offset = scroll?.contentOffset
             list?.restore(); viewport.restore()
             (root?.next as? UIViewController)?.traitOverrides.remove(UITraitVerticalSizeClass.self)
@@ -46,7 +71,7 @@ enum LandscapePlaylistHeader {
             cover.removeFromSuperview()
         }
         func apply() {
-            guard let root, let parent = root.superview, let window = root.window, let scroll else { return }
+            guard visible, let root, let parent = root.superview, let window = root.window, let scroll else { return }
             let safe = window.safeAreaLayoutGuide.layoutFrame
             var top = safe.minY + 64
             if let controller = root.next as? UIViewController, let bar = controller.navigationController?.navigationBar,
@@ -57,7 +82,7 @@ enum LandscapePlaylistHeader {
             let side = max(80, min(250, min(bottom - top, safe.width * 0.30)))
             let left = safe.minX + 8
             let right = left + side + 24
-            let column = CGRect(x: right, y: top, width: max(1, safe.maxX - right - 8), height: max(1, bottom - top))
+            let column = CGRect(x: right, y: top, width: max(1, LandscapeNavigation.contentRight(in: window) - right), height: max(1, bottom - top))
             // Shrink the controller's viewport too: Spotify must measure this column like portrait.
             viewport.place(column, in: window)
             list?.place(root.bounds, in: root)
@@ -65,10 +90,7 @@ enum LandscapePlaylistHeader {
                 if cover.superview !== parent { parent.addSubview(cover) }
                 cover.frame = parent.convert(CGRect(x: left, y: top, width: side, height: side), from: window)
             } else { cover.removeFromSuperview() }
-            if scroll.contentInsetAdjustmentBehavior != .never { scroll.contentInsetAdjustmentBehavior = .never }
-            let target = UIEdgeInsets(top: 0, left: 0, bottom: 8, right: 0)
-            if scroll.contentInset != target { scroll.contentInset = target }
-            if scroll.verticalScrollIndicatorInsets != .zero { scroll.verticalScrollIndicatorInsets = .zero }
+            // Spotify owns sticky-header and row insets inside this bounded viewport.
         }
     }
 
@@ -77,15 +99,17 @@ enum LandscapePlaylistHeader {
         let column: NativeViewPlacement
         let toolbar: NativeViewPlacement?
         let artworkWasHidden: Bool
+        let artworkAlpha: CGFloat
         weak var pageRoot: UIView?
         var fittedHeight: CGFloat = 0
         init(artwork: UIView, column: UIView, toolbar: UIView?, pageRoot: UIView?) {
-            artworkWasHidden = artwork.isHidden
+            artworkWasHidden = artwork.isHidden; artworkAlpha = artwork.alpha
             self.artwork = NativeViewPlacement(artwork); self.column = NativeViewPlacement(column)
             self.toolbar = toolbar.map(NativeViewPlacement.init); self.pageRoot = pageRoot
         }
         func restore() {
             artwork.view?.isHidden = artworkWasHidden
+            artwork.view?.alpha = artworkAlpha
             artwork.restore(); column.restore(); toolbar?.restore()
         }
     }
@@ -117,9 +141,16 @@ enum LandscapePlaylistHeader {
             old?.restore(); page = Page(root: root, list: list)
             objc_setAssociatedObject(root, &pageKey, page, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
         }
-        if let artwork = header.flatMap({ PageLookup.find("Components.Header.UI.ArtworkImage", in: $0) }),
-           let image = artwork.eeveeFirst(UIImageView.self, where: { $0.image != nil })?.image {
-            if page.cover.image !== image { page.cover.image = image }
+        if let artwork = header.flatMap({ PageLookup.find("Components.Header.UI.ArtworkImage", in: $0) }) {
+            // The shadow texture is also a UIImageView. Prefer the actual square artwork.
+            var candidates = [UIImageView]()
+            func collect(_ view: UIView) {
+                if let image = view as? UIImageView, image.bounds.width > 40,
+                   image.bounds.height > image.bounds.width * 0.75 { candidates.append(image) }
+                view.subviews.forEach(collect)
+            }
+            collect(artwork)
+            page.track(candidates)
         }
         page.apply()
     }
@@ -162,8 +193,8 @@ enum LandscapePlaylistHeader {
         guard var column = anchor else { return }
         while let parent = column.superview, parent !== header, !image.isDescendant(of: parent) { column = parent }
         guard column !== header, !image.isDescendant(of: column) else { return }
-        var artwork = image
-        while let parent = artwork.superview, parent !== header, !column.isDescendant(of: parent) { artwork = parent }
+        // Ancestors can also own the playback toolbar. Suppress only the image component.
+        let artwork = image
         var toolbar = header.eeveeFirst(UIView.self, where: { $0.accessibilityIdentifier == "header-play-button" })
         while let node = toolbar, let parent = node.superview, parent !== header,
               !column.isDescendant(of: parent), !artwork.isDescendant(of: parent) { toolbar = parent }
@@ -176,7 +207,10 @@ enum LandscapePlaylistHeader {
             objc_setAssociatedObject(header, &headerKey, state, .OBJC_ASSOCIATION_RETAIN_NONATOMIC); headers.add(header)
         }
         if state.pageRoot == nil { state.pageRoot = pageRoot(for: header) }
-        if !artwork.isHidden { artwork.isHidden = true }
+        // Keep the native image loader alive while its visible image is mirrored at the side.
+        if artwork.isHidden { artwork.isHidden = false }
+        if artwork.alpha != 0 { artwork.alpha = 0 }
+        if image.alpha != 0 { image.alpha = 0 }
         if let stack = artwork.superview as? UIStackView, stack.arrangedSubviews.contains(artwork) { stack.removeArrangedSubview(artwork) }
         let width = max(1, header.bounds.width - 32)
         let fitting = column.systemLayoutSizeFitting(CGSize(width: width, height: UIView.layoutFittingCompressedSize.height),
@@ -206,7 +240,7 @@ enum LandscapePlaylistHeader {
         guard window.bounds.width > window.bounds.height else { return nil }
         for header in headers.allObjects where header.window === window {
             guard let state = objc_getAssociatedObject(header, &headerKey) as? Header,
-                  let pageRoot = state.pageRoot, let page = objc_getAssociatedObject(pageRoot, &pageKey) as? Page,
+                  let pageRoot = state.pageRoot, let page = objc_getAssociatedObject(pageRoot, &pageKey) as? Page, page.visible,
                   let list = page.scroll, list.convert(list.bounds, to: window).contains(point) else { continue }
             for root in [state.toolbar?.view, state.column.view].compactMap({ $0 }) {
                 if let hit = NativeHitRouter.hit(root, at: point, in: window, event: event) { return hit }

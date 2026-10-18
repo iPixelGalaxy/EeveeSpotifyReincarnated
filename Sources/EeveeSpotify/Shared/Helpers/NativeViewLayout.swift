@@ -1,17 +1,24 @@
 import UIKit
 
 enum NativeHitRouter {
-    static func hit(_ root: UIView, at point: CGPoint, in window: UIWindow, event: UIEvent?) -> UIView? {
+    static func hit(_ root: UIView, at point: CGPoint, in window: UIWindow, event: UIEvent?, region: CGRect? = nil) -> UIView? {
         guard root.window === window, !root.isHidden, root.alpha > 0.01, root.isUserInteractionEnabled else { return nil }
+        var ancestor = root.superview
+        while let view = ancestor, view !== window {
+            if view.isHidden || view.alpha <= 0.01 { return nil }
+            ancestor = view.superview
+        }
         var top = window.rootViewController
         while let presented = top?.presentedViewController, !presented.isBeingDismissed { top = presented }
         guard let visible = top?.viewIfLoaded, root.isDescendant(of: visible) else { return nil }
+        if let region, !region.contains(point) { return nil }
         let local = root.convert(point, from: window)
         guard root.bounds.contains(local) else { return nil }
-        if let hit = root.hitTest(local, with: event), hit !== root || root is UIControl || root.gestureRecognizers?.isEmpty == false { return hit }
+        if let hit = root.hitTest(local, with: event), hit.isDescendant(of: root),
+           hit !== root || root is UIControl || root.gestureRecognizers?.isEmpty == false { return hit }
         // A native container can reject a moved child even though the child is visible.
         for child in root.subviews.reversed() {
-            if let hit = child.hitTest(child.convert(local, from: root), with: event) { return hit }
+            if let hit = child.hitTest(child.convert(local, from: root), with: event), hit.isDescendant(of: root) { return hit }
         }
         return nil
     }

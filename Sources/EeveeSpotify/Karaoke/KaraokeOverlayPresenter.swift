@@ -150,10 +150,13 @@ final class KaraokeOverlayPresenter {
     }
 
     static func routedControlHit(at point: CGPoint, in window: UIWindow, event: UIEvent?) -> UIView? {
-        guard isPresented, focused || isLandscape, canvas?.window === window else { return nil }
+        guard isPresented, canvas?.window === window else { return nil }
         if isLandscape, let hit = landscapeSidebar?.nativeHit(at: point, in: window, event: event) { return hit }
-        for root in [controls, duration, information, header, footer].compactMap({ $0 }) {
-            if let hit = NativeHitRouter.hit(root, at: point, in: window, event: event) { return hit }
+        // The header moves in portrait too, including while the full controls are showing.
+        let roots = [header, footer] + (focused || isLandscape ? [controls, duration, information] : [])
+        for root in roots.compactMap({ $0 }) {
+            guard let region = unitFrame(root, in: window), region.contains(point) else { continue }
+            if let hit = NativeHitRouter.hit(root, at: point, in: window, event: event, region: region) { return hit }
         }
         return nil
     }
@@ -172,7 +175,8 @@ final class KaraokeOverlayPresenter {
         let keepCompact = compactTouch && focused
         compactTouch = false
         writeDebugLog("[Karaoke][touch] native control ended; compact=\(keepCompact)")
-        if !keepCompact { interact() }
+        // Finish UIKit's control action before changing the layout under its touch.
+        if !keepCompact { DispatchQueue.main.async { if isPresented { interact() } } }
     }
 
     static func registerControls(_ view: UIView) {
