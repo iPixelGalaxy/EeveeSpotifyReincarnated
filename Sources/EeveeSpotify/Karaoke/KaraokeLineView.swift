@@ -50,6 +50,9 @@ struct KaraokeLineView: View {
                 let plan = textCache.plan(words: layout.words, width: availableWidth, fontSize: fontSize,
                                           alignment: alignment, rtl: layout.isRTL)
                 KaraokeShapedText(plan: plan, currentMs: currentMs, active: singing, timingOffsetMs: timingOffsetMs, onSeek: onSeek)
+                    .frame(width: plan.drawingSize.width, height: plan.drawingSize.height)
+                    .padding(.horizontal, -plan.horizontalGutter)
+                    .padding(.vertical, -plan.verticalGutter)
                     .frame(width: availableWidth, height: plan.height)
             }
         }
@@ -86,7 +89,8 @@ private struct KaraokeInterludeView: View {
                     .shadow(color: .white.opacity(progress > 0 && progress < 1 ? 0.45 : 0), radius: 15)
             }
         }
-        .frame(height: fontSize * 1.25)
+        .padding(.vertical, 22)
+        .frame(height: max(fontSize * 1.25, fontSize * 0.5 + 44))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Text("Instrumental break"))
     }

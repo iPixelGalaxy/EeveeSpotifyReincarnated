@@ -9,6 +9,7 @@ final class KaraokeLyricsViewModel: ObservableObject {
     @Published private(set) var layouts: [KaraokeLineLayout] = []
 
     private var observer: NSObjectProtocol?
+    private var optionsObserver: NSObjectProtocol?
     private var retryWork: DispatchWorkItem?
     private var attempts = 0
 
@@ -23,16 +24,21 @@ final class KaraokeLyricsViewModel: ObservableObject {
         observer = NotificationCenter.default.addObserver(
             forName: .eeveeKaraokeLyricsChanged, object: nil, queue: .main
         ) { [weak self] _ in self?.sync() }
+        optionsObserver = NotificationCenter.default.addObserver(
+            forName: .eeveeKaraokeOptionsChanged, object: nil, queue: .main
+        ) { [weak self] _ in self?.sync() }
         sync()
     }
 
     deinit {
         retryWork?.cancel()
         if let observer { NotificationCenter.default.removeObserver(observer) }
+        if let optionsObserver { NotificationCenter.default.removeObserver(optionsObserver) }
     }
 
     private func apply(_ lyrics: KaraokeLyricsDto?) {
-        let displayLyrics = lyrics?.addingInterludes()
+        let prepared = UserDefaults.karaokeOptions.wordSplittingEnabled ? lyrics?.splittingTimedWords() : lyrics
+        let displayLyrics = prepared?.addingInterludes()
         self.lyrics = displayLyrics
         let songIsRTL = displayLyrics?.isRTL ?? false
         layouts = displayLyrics?.lines.map { line in

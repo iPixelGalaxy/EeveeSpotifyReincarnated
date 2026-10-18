@@ -27,3 +27,5 @@ Space Gravity physics adapted from src/utils/Lyrics/SpaceGravity.ts and
 src/css/Lyrics/main.css at the same reference commit (AGPL-3.0).
 Native implementation: KaraokeSpaceGravityView.swift and KaraokeSpaceMotion.swift.
 Phone acceleration replaces desktop window-motion impulses.
+
+Optional native spring scrolling adapts LyricsVirtualizer.ts. Experimental word units and weighted timing ranges adapt ExperimentalWordSync.ts. Dash-aware floating groups adapt SpaceGravity.ts.

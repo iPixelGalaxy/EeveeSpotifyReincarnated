@@ -10,6 +10,7 @@ struct KaraokeLyricsView: View {
     var onDismiss: () -> Void
     @ObservedObject private var viewport: KaraokeViewport
     @StateObject private var model: KaraokeLyricsViewModel
+    @ObservedObject private var lyricFont = KaraokeFont.shared
     @State private var options = UserDefaults.karaokeOptions
 
     init(trackId: String?, lyrics: KaraokeLyricsDto?, viewport: KaraokeViewport, onDismiss: @escaping () -> Void) {
@@ -33,7 +34,7 @@ struct KaraokeLyricsView: View {
                     if let lyrics = model.lyrics {
                         content(lyrics: lyrics, layouts: model.layouts, size: frame.size)
                             // A new song starts from its own scroll position and state.
-                            .id(model.trackId)
+                            .id("\(model.trackId ?? ""):\(lyricFont.revision)")
                     } else {
                         VStack(spacing: 16) {
                             if model.loadingFailed {
@@ -67,8 +68,10 @@ struct KaraokeLyricsView: View {
         .simultaneousGesture(DragGesture(minimumDistance: 20)
             .onChanged { _ in KaraokeOverlayPresenter.interact(dragging: true) }
             .onEnded { _ in KaraokeOverlayPresenter.interact() })
+        .onAppear { lyricFont.configure(UserDefaults.karaokeOptions) }
         .onReceive(NotificationCenter.default.publisher(for: .eeveeKaraokeOptionsChanged)) { _ in
             let updated = UserDefaults.karaokeOptions
+            lyricFont.configure(updated)
             if options != updated { options = updated }
             if !updated.enabled { onDismiss() }
         }
@@ -126,8 +129,14 @@ private struct KaraokeScrollingLines: View {
     private var horizontalPadding: CGFloat { max(20, size.width * 0.05) }
     private var fontSize: CGFloat { 1.3 * CGFloat(KaraokeOptions.textScaleBaseline) * CGFloat(min(1.3, max(0.7, options.textScale))) * min(36, max(28, size.width * 0.075)) }
     @StateObject private var anchorLayout = KaraokeTextPlanCache()
+    // Match LyricsVirtualizer.ts: 1 Hz, critically damped, preserving an interrupted glide.
+    private var scrollAnimation: Animation {
+        options.smoothScrolling && !UIAccessibility.isReduceMotionEnabled
+            ? .interpolatingSpring(mass: 1, stiffness: 39.4784176, damping: 12.5663706)
+            : .timingCurve(0.4, 0, 0, 1, duration: UIAccessibility.isReduceMotionEnabled ? 0 : 0.65)
+    }
     private var focus: UnitPoint {
-        let lineHeight = UIFont.systemFont(ofSize: fontSize, weight: .bold).lineHeight + fontSize * 0.23
+        let lineHeight = KaraokeFont.shared.font(ofSize: fontSize).lineHeight + fontSize * 0.23
         var itemHeight = lineHeight
         if let index = activeLineIndex, layouts.indices.contains(index) {
             let layout = layouts[index]
@@ -242,7 +251,7 @@ private struct KaraokeScrollingLines: View {
             }
             .onChange(of: activeLineIndex) { newIndex in
                 guard !isBrowsing, let newIndex = newIndex, newIndex < lyrics.lines.count else { return }
-                withAnimation(.timingCurve(0.4, 0, 0, 1, duration: 0.65)) {
+                withAnimation(scrollAnimation) {
                     proxy.scrollTo(newIndex, anchor: focus)
                 }
             }
@@ -250,7 +259,7 @@ private struct KaraokeScrollingLines: View {
                 guard isBrowsing, !isDragging, Date() >= resumeAt else { return }
                 isBrowsing = false
                 if let activeLineIndex = activeLineIndex {
-                    withAnimation(.timingCurve(0.4, 0, 0, 1, duration: 0.65)) {
+                    withAnimation(scrollAnimation) {
                         proxy.scrollTo(activeLineIndex, anchor: focus)
                     }
                 }

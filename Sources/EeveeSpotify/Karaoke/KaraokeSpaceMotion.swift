@@ -1,8 +1,9 @@
 import UIKit
 import CoreMotion
+import Combine
 
 /// Sample fast flicks independently of drawing; a short pulse becomes retained momentum.
-final class KaraokeSpaceMotion {
+final class KaraokeSpaceMotion: ObservableObject {
     static let shared = KaraokeSpaceMotion()
     private var manager: CMMotionManager?
     private weak var owner: UIView?
@@ -25,32 +26,127 @@ final class KaraokeSpaceMotion {
     }
     private var state = State()
     private var generation = 0
+    @Published private(set) var recording = false
+    @Published private(set) var sampleURL: URL?
+    @Published private(set) var recordingStatus = ""
+    private struct RecordedSample: Encodable {
+        let time: Double
+        let userAcceleration: [Double]
+        let gravity: [Double]
+        let rotationRate: [Double]
+        let quaternion: [Double]
+    }
+    private struct Recording: Encodable {
+        let schemaVersion = 1
+        let recordedAt: String
+        let interfaceOrientation: Int
+        let screenSize: [Double]
+        let units = ["acceleration": "g", "rotationRate": "rad/s", "time": "seconds"]
+        let samples: [RecordedSample]
+    }
+    private var capture: [RecordedSample]?
+    private var captureStamp: Double?
+    private var captureDate = ""
+    private var captureOrientation = 0
+    private var captureSize = [Double]()
+    private var captureToken = 0
+    private var captureTimer: DispatchWorkItem?
+    private var captureObserver: NSObjectProtocol?
 
     func start(for view: UIView) {
-        if owner === view { return }
-        owner = view
-        if manager != nil { return }
+        if owner !== view {
+            owner = view
+            lock.lock(); state.pending = .zero; lock.unlock()
+        }
+        _ = ensureSensor()
+    }
+
+    private func ensureSensor() -> Bool {
+        if manager != nil { return true }
         guard let description = Bundle.main.object(forInfoDictionaryKey: "NSMotionUsageDescription") as? String,
-              !description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+              !description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
         let manager = CMMotionManager()
-        guard manager.isDeviceMotionAvailable else { return }
+        guard manager.isDeviceMotionAvailable else { return false }
         manager.deviceMotionUpdateInterval = 1.0 / 120.0
         self.manager = manager
         lock.lock(); let token = generation; lock.unlock()
         manager.startDeviceMotionUpdates(to: sensorQueue) { [weak self] motion, _ in
             if let motion { self?.ingest(motion, generation: token) }
         }
+        return true
     }
 
     func stop(for view: UIView) {
         guard owner == nil || owner === view else { return }
+        owner = nil
+        stopSensorIfUnused()
+    }
+
+    private func stopSensorIfUnused() {
+        guard owner == nil, !recording else { return }
         manager?.stopDeviceMotionUpdates()
         manager = nil
-        owner = nil
         lock.lock()
         generation += 1
         state = State()
         lock.unlock()
+    }
+
+    func recordSample() {
+        guard !recording else { return }
+        guard ensureSensor() else { recordingStatus = "karaoke_motion_unavailable".localized; return }
+        if let sampleURL { try? FileManager.default.removeItem(at: sampleURL) }
+        sampleURL = nil
+        captureToken += 1
+        recording = true
+        recordingStatus = ""
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        captureDate = formatter.string(from: Date())
+        captureSize = [Double(UIScreen.main.bounds.width), Double(UIScreen.main.bounds.height)]
+        captureOrientation = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+            .first(where: { $0.activationState == .foregroundActive })?.interfaceOrientation.rawValue ?? 0
+        lock.lock(); capture = []; captureStamp = nil; lock.unlock()
+        let timer = DispatchWorkItem { [weak self] in self?.finishRecording() }
+        captureTimer = timer
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5, execute: timer)
+        captureObserver = NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification,
+            object: nil, queue: .main) { [weak self] _ in self?.finishRecording() }
+    }
+
+    private func finishRecording() {
+        guard recording else { return }
+        captureTimer?.cancel(); captureTimer = nil
+        if let captureObserver { NotificationCenter.default.removeObserver(captureObserver) }
+        captureObserver = nil
+        lock.lock()
+        let samples = capture ?? []
+        capture = nil; captureStamp = nil
+        lock.unlock()
+        recording = false
+        stopSensorIfUnused()
+        guard !samples.isEmpty else { recordingStatus = "karaoke_motion_failed".localized; return }
+        let token = captureToken
+        let recording = Recording(recordedAt: captureDate, interfaceOrientation: captureOrientation,
+            screenSize: captureSize, samples: samples)
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let file = FileManager.default.temporaryDirectory.appendingPathComponent("EeveeMotion-" + UUID().uuidString + ".json")
+            do {
+                let encoder = JSONEncoder()
+                encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+                try encoder.encode(recording).write(to: file, options: .atomic)
+                DispatchQueue.main.async {
+                    guard let self, self.captureToken == token else { try? FileManager.default.removeItem(at: file); return }
+                    self.sampleURL = file
+                    self.recordingStatus = "karaoke_motion_ready".localized
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    guard let self, self.captureToken == token else { return }
+                    self.recordingStatus = "karaoke_motion_failed".localized
+                }
+            }
+        }
     }
 
     private func length(_ value: SIMD3<Double>) -> Double {
@@ -64,6 +160,16 @@ final class KaraokeSpaceMotion {
         lock.lock()
         defer { lock.unlock() }
         guard token == generation else { return }
+        if capture != nil {
+            let origin = captureStamp ?? motion.timestamp
+            captureStamp = origin
+            if motion.timestamp - origin <= 5.05, (capture?.count ?? 0) < 800 {
+                let g = motion.gravity, r = motion.rotationRate, q = motion.attitude.quaternion
+                capture?.append(RecordedSample(time: motion.timestamp - origin,
+                    userAcceleration: [a.x, a.y, a.z], gravity: [g.x, g.y, g.z],
+                    rotationRate: [r.x, r.y, r.z], quaternion: [q.x, q.y, q.z, q.w]))
+            }
+        }
         let delta = min(0.05, max(0.001, motion.timestamp - (state.stamp ?? motion.timestamp - 1.0 / 120)))
         let magnitude = length(raw)
         let jerk = state.stamp == nil ? 0 : length(raw - state.previous) / delta

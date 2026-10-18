@@ -481,6 +481,7 @@ final class KaraokeOverlayPresenter {
 
     static func registerHeader(_ root: UIView) {
         header = root
+        KaraokeLyricsSettingsMenu.register(root)
         if isPresented { updateFrame() } else { restoreIfNeeded() }
     }
 

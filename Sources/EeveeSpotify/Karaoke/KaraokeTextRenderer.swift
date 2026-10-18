@@ -27,6 +27,20 @@ final class KaraokeTextPlan {
     let frame: CTFrame
     let height: CGFloat
     let fontSize: CGFloat
+    let layoutWidth: CGFloat
+    private(set) var inkBounds = CGRect.null
+    var horizontalGutter: CGFloat {
+        max(24, ceil(fontSize * 0.35 + 18 + max(0, max(-inkBounds.minX, inkBounds.maxX - layoutWidth))))
+    }
+    var verticalGutter: CGFloat {
+        max(24, ceil(fontSize * 0.35 + 18 + max(0, max(-inkBounds.minY, inkBounds.maxY - height))))
+    }
+    var drawingSize: CGSize { CGSize(width: layoutWidth + 2 * horizontalGutter, height: height + 2 * verticalGutter) }
+    var collisionRadius: CGFloat {
+        let x = max(abs(inkBounds.minX - layoutWidth / 2), abs(inkBounds.maxX - layoutWidth / 2))
+        let y = max(abs(inkBounds.minY - height / 2), abs(inkBounds.maxY - height / 2))
+        return max(14, hypot(x, y) + fontSize * 0.2 + 14)
+    }
     let rtl: Bool
     let text: String
     let inkColor: UIColor
@@ -49,6 +63,7 @@ final class KaraokeTextPlan {
         glowInk = inkColor.withAlphaComponent(0.3).cgColor
         highlightGradient = CGGradient(colorsSpace: Self.gradientSpace, colors: [bright, dim] as CFArray, locations: [0, 1])
         self.fontSize = fontSize
+        self.layoutWidth = width
         self.rtl = rtl
         var text = ""
         var segments: [Segment] = []
@@ -72,7 +87,7 @@ final class KaraokeTextPlan {
         style.lineBreakMode = .byWordWrapping
         style.lineSpacing = fontSize * 0.23
         let attributed = NSAttributedString(string: text, attributes: [
-            .font: UIFont.systemFont(ofSize: fontSize, weight: .bold),
+            .font: KaraokeFont.shared.font(ofSize: fontSize),
             .foregroundColor: inkColor, .paragraphStyle: style
         ])
         let setter = CTFramesetterCreateWithAttributedString(attributed)
@@ -105,7 +120,9 @@ final class KaraokeTextPlan {
                     CTFontGetBoundingRectsForGlyphs(font, .default, &value, &bounds, 1)
                     guard bounds.width > 0, bounds.height > 0 else { continue }
                     let point = CGPoint(x: origins[lineIndex].x + positions[index].x, y: origins[lineIndex].y + positions[index].y)
-                    let glyph = Glyph(font: font, value: value, path: CTFontCreatePathForGlyph(font, value, nil),
+                    let path = CTFontCreatePathForGlyph(font, value, nil)
+                    bounds = bounds.union(path?.boundingBoxOfPath ?? .null)
+                    let glyph = Glyph(font: font, value: value, path: path,
                         position: point, bounds: bounds, advance: max(0, advances[index].width),
                         stringIndex: indices[index], segment: segment, rtl: CTRunGetStatus(run).contains(.rightToLeft))
                     self.segments[segment].glyphs.append(glyphs.count)
@@ -114,6 +131,12 @@ final class KaraokeTextPlan {
                 }
             }
         }
+        for glyph in glyphs {
+            let box = glyph.bounds.offsetBy(dx: glyph.position.x, dy: glyph.position.y)
+            let ui = CGRect(x: box.minX, y: height - box.maxY, width: box.width, height: box.height)
+            if !ui.isNull, !ui.isInfinite { inkBounds = inkBounds.union(ui) }
+        }
+        if inkBounds.isNull { inkBounds = CGRect(x: 0, y: 0, width: width, height: height) }
         for segment in self.segments.indices {
             let ordered = self.segments[segment].glyphs.sorted { glyphs[$0].stringIndex < glyphs[$1].stringIndex }
             let total = max(1, ordered.reduce(CGFloat.zero) { $0 + glyphs[$1].advance })
@@ -133,13 +156,14 @@ final class KaraokeTextPlanCache: ObservableObject {
         let words: [[KaraokeSyllableDto]]
         let width: CGFloat
         let fontSize: CGFloat
+        let fontRevision: Int
         let alignment: HorizontalAlignment
         let rtl: Bool
     }
     private var key: Key?
     private var stored: KaraokeTextPlan?
     func plan(words: [[KaraokeSyllableDto]], width: CGFloat, fontSize: CGFloat, alignment: HorizontalAlignment, rtl: Bool) -> KaraokeTextPlan {
-        let next = Key(words: words, width: width, fontSize: fontSize, alignment: alignment, rtl: rtl)
+        let next = Key(words: words, width: width, fontSize: fontSize, fontRevision: KaraokeFont.shared.revision, alignment: alignment, rtl: rtl)
         if key == next, let stored { return stored }
         let plan = KaraokeTextPlan(words: words, width: width, fontSize: fontSize, alignment: alignment, rtl: rtl)
         key = next
@@ -169,12 +193,19 @@ final class KaraokeTextCanvas: UIView {
     private var usesPlaybackClock = false
     private var timingOffsetMs = 0
     private var displayLink: CADisplayLink?
+    private let haloLayer = CALayer()
+    private var halo = KaraokeSpring(position: 0, frequency: 1, damping: 0.5)
+    private var haloStamp: TimeInterval?
+    private static let haloCurve = KaraokeAnimationCurve(points: [(0, 0), (0.5, 1), (1, 0)])
 
     override init(frame: CGRect) {
         super.init(frame: frame)
         backgroundColor = .clear
         isOpaque = false
         contentMode = .redraw
+        clipsToBounds = false
+        haloLayer.shadowOffset = .zero
+        layer.addSublayer(haloLayer)
         addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(seek)))
         Self.visible.add(self)
         isAccessibilityElement = true
@@ -191,6 +222,7 @@ final class KaraokeTextCanvas: UIView {
     }
     override func layoutSubviews() {
         super.layoutSubviews()
+        if let plan { updateHalo(in: plan) }
         updateDisplayLink()
     }
 
@@ -199,6 +231,8 @@ final class KaraokeTextCanvas: UIView {
         let changed = self.plan !== plan || self.active != active
         if self.plan !== plan {
             motions = plan.segments.map { _ in KaraokeWordMotion() }
+            halo = KaraokeSpring(position: 0, frequency: 1, damping: 0.5)
+            haloStamp = nil
             accessibilityLabel = plan.text
         }
         self.plan = plan
@@ -215,17 +249,26 @@ final class KaraokeTextCanvas: UIView {
     }
 
     private func updateMotion(at position: Int) {
+        let seek = abs(position - currentMs) > 500
         currentMs = position
         guard let plan else { return }
+        let stamp = ProcessInfo.processInfo.systemUptime
+        let dt = min(0.05, max(0, stamp - (haloStamp ?? stamp)))
+        let start = plan.segments.first?.timing.startMs ?? 0
+        let end = plan.segments.last?.timing.endMs ?? start + 1
+        let progress = min(1, max(0, Double(position - start) / Double(max(1, end - start))))
+        let glow = active ? Self.haloCurve.value(at: progress) : 0
+        _ = halo.step(goal: glow, dt: dt, snap: seek || haloStamp == nil || UIAccessibility.isReduceMotionEnabled)
+        haloStamp = stamp
         if active || renderingMotion {
-            let stamp = ProcessInfo.processInfo.systemUptime
             for index in plan.segments.indices {
                 let part = plan.segments[index]
                 motions[index].update(currentMs: position, startMs: part.timing.startMs, endMs: part.timing.endMs,
                     letterCount: !plan.rtl && part.timing.endMs - part.timing.startMs >= 1000 ? part.glyphs.count : 0, active: active, stamp: stamp)
             }
         }
-        renderingMotion = active || motions.contains { !$0.isAtRest }
+        renderingMotion = active || motions.contains { !$0.isAtRest } || abs(halo.position) > 0.001 || abs(halo.velocity) > 0.001
+        updateHalo(in: plan)
     }
 
     private var canAnimate: Bool {
@@ -270,6 +313,7 @@ final class KaraokeTextCanvas: UIView {
 
     func containsInk(_ point: CGPoint) -> Bool {
         guard let plan, bounds.contains(point) else { return false }
+        let point = CGPoint(x: point.x - plan.horizontalGutter, y: point.y - plan.verticalGutter)
         return plan.glyphs.contains { glyph in
             let box = glyph.bounds.applying(transform(for: glyph, in: plan).0)
             let ui = CGRect(x: box.minX, y: plan.height - box.maxY, width: box.width, height: box.height)
@@ -277,12 +321,41 @@ final class KaraokeTextCanvas: UIView {
         }
     }
     override func point(inside point: CGPoint, with event: UIEvent?) -> Bool { containsInk(point) }
+    override var accessibilityFrame: CGRect {
+        get {
+            guard let plan else { return super.accessibilityFrame }
+            return convert(plan.inkBounds.offsetBy(dx: plan.horizontalGutter, dy: plan.verticalGutter), to: nil)
+        }
+        set { super.accessibilityFrame = newValue }
+    }
     override func accessibilityActivate() -> Bool { onSeek?(); return true }
+
+    private func updateHalo(in plan: KaraokeTextPlan) {
+        let amount = min(1, max(0, halo.position))
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        haloLayer.frame = bounds
+        haloLayer.shadowColor = plan.inkColor.cgColor
+        haloLayer.shadowOpacity = Float(amount * 0.5)
+        haloLayer.shadowRadius = 4 + 8 * amount
+        if amount > 0.001 {
+            let outline = CGMutablePath()
+            let flip = CGAffineTransform(a: 1, b: 0, c: 0, d: -1,
+                tx: plan.horizontalGutter, ty: plan.verticalGutter + plan.height)
+            for glyph in plan.glyphs {
+                if let path = glyph.path {
+                    outline.addPath(path, transform: transform(for: glyph, in: plan).0.concatenating(flip))
+                }
+            }
+            haloLayer.shadowPath = outline
+        } else { haloLayer.shadowPath = nil }
+        CATransaction.commit()
+    }
 
     override func draw(_ rect: CGRect) {
         guard let plan, let context = UIGraphicsGetCurrentContext() else { return }
         context.saveGState()
-        context.translateBy(x: 0, y: plan.height)
+        context.translateBy(x: plan.horizontalGutter, y: plan.verticalGutter + plan.height)
         context.scaleBy(x: 1, y: -1)
         context.textMatrix = .identity
         if !renderingMotion { CTFrameDraw(plan.frame, context); context.restoreGState(); return }

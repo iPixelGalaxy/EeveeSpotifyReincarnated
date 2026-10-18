@@ -101,6 +101,7 @@ enum KaraokeFooterButton {
 
 func activateKaraokeFooterButton() {
     guard #available(iOS 15.0, *), UserDefaults.lyricsSource.supportsCustomLyricsView else { return }
+    KaraokeFont.shared.configure(UserDefaults.karaokeOptions)
     let start = CFAbsoluteTimeGetCurrent()
     guard NSClassFromString(KaraokeFooterUnitHook.targetName) != nil else {
         eeveeLog("[EeveeSpotify][Karaoke] Footer button skipped: footer unit missing")

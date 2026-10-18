@@ -22,6 +22,11 @@ struct KaraokeOptions: Codable, Hashable {
     var timingOffsetMs: Double = 0
     var allowScreenRecording = true
     var spaceGravityMode = false
+    var smoothScrolling = false
+    var experimentalWordSplitting = false
+    var wordSplittingEnabled: Bool { experimentalWordSplitting || spaceGravityMode }
+    var customFontEnabled = false
+    var customFontURL = ""
 
     init(textAlignment: KaraokeTextAlignment = .automatic, reversedDirection: Bool = false, enabled: Bool = true, blurIntensity: Double = 1.5, textScale: Double = 1) {
         self.textAlignment = textAlignment
@@ -32,7 +37,7 @@ struct KaraokeOptions: Codable, Hashable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case textAlignment, reversedDirection, enabled, blurIntensity, timingOffsetMs, allowScreenRecording, textScale, textScaleVersion, spaceGravityMode
+        case textAlignment, reversedDirection, enabled, blurIntensity, timingOffsetMs, allowScreenRecording, textScale, textScaleVersion, spaceGravityMode, smoothScrolling, experimentalWordSplitting, customFontEnabled, customFontURL
     }
 
     // Settings saved before these fields existed must keep decoding.
@@ -52,5 +57,9 @@ struct KaraokeOptions: Codable, Hashable {
         timingOffsetMs = try container.decodeIfPresent(Double.self, forKey: .timingOffsetMs) ?? 0
         allowScreenRecording = try container.decodeIfPresent(Bool.self, forKey: .allowScreenRecording) ?? true
         spaceGravityMode = try container.decodeIfPresent(Bool.self, forKey: .spaceGravityMode) ?? false
+        smoothScrolling = try container.decodeIfPresent(Bool.self, forKey: .smoothScrolling) ?? false
+        experimentalWordSplitting = try container.decodeIfPresent(Bool.self, forKey: .experimentalWordSplitting) ?? false
+        customFontEnabled = try container.decodeIfPresent(Bool.self, forKey: .customFontEnabled) ?? false
+        customFontURL = try container.decodeIfPresent(String.self, forKey: .customFontURL) ?? ""
     }
 }

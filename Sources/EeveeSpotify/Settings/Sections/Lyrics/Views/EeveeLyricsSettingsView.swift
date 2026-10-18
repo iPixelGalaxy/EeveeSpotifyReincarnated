@@ -3,6 +3,10 @@ import SwiftUI
 struct EeveeLyricsSettingsView: View {
     @StateObject var viewModel = EeveeLyricsSettingsViewModel()
     @State private var karaokeOptions: KaraokeOptions = UserDefaults.karaokeOptions
+    @ObservedObject private var lyricFont = KaraokeFont.shared
+    @ObservedObject private var motion = KaraokeSpaceMotion.shared
+    @State private var fontURLDraft = UserDefaults.karaokeOptions.customFontURL
+    @State private var shareMotion = false
     @State var spicyLyricsApiKey: String = UserDefaults.spicyLyricsApiKey
 
     var body: some View {
@@ -37,9 +41,72 @@ struct EeveeLyricsSettingsView: View {
         .animation(.default, value: viewModel.animationValues)
         .onChange(of: karaokeOptions) {
             UserDefaults.karaokeOptions = $0
+            lyricFont.configure($0)
             NotificationCenter.default.post(name: .eeveeKaraokeOptionsChanged, object: nil)
         }
+        .onChange(of: karaokeOptions.customFontURL) { fontURLDraft = $0 }
+        .sheet(isPresented: $shareMotion) {
+            if let url = motion.sampleURL { KaraokeMotionShareSheet(url: url) }
+        }
         .onChange(of: spicyLyricsApiKey) { UserDefaults.spicyLyricsApiKey = $0 }
+    }
+
+    @ViewBuilder private func gravityControls() -> some View {
+        Toggle("karaoke_space_gravity".localized, isOn: $karaokeOptions.spaceGravityMode)
+        if karaokeOptions.spaceGravityMode {
+            Text("karaoke_space_gravity_help".localized).font(.caption).foregroundColor(.gray)
+        }
+        motionSampleControls()
+    }
+
+    @ViewBuilder private func wordSplittingControls() -> some View {
+        Toggle("karaoke_word_splitting".localized, isOn: Binding(
+            get: { karaokeOptions.wordSplittingEnabled },
+            set: { karaokeOptions.experimentalWordSplitting = $0 }
+        )).disabled(karaokeOptions.spaceGravityMode)
+        if karaokeOptions.spaceGravityMode {
+            Text("karaoke_word_splitting_gravity".localized).font(.caption).foregroundColor(.gray)
+        } else if karaokeOptions.experimentalWordSplitting {
+            Text("karaoke_word_splitting_help".localized).font(.caption).foregroundColor(.gray)
+        }
+    }
+
+    @ViewBuilder private func motionSampleControls() -> some View {
+        if karaokeOptions.spaceGravityMode || motion.recording || motion.sampleURL != nil {
+            Button(motion.recording ? "karaoke_motion_recording".localized : "karaoke_motion_record".localized) {
+                motion.recordSample()
+            }.disabled(motion.recording)
+            Text("karaoke_motion_help".localized).font(.caption).foregroundColor(.gray)
+            if !motion.recording, !motion.recordingStatus.isEmpty {
+                Text(motion.recordingStatus).font(.caption).foregroundColor(.gray)
+            }
+            if motion.sampleURL != nil {
+                Button("karaoke_motion_share".localized) { shareMotion = true }
+            }
+        }
+    }
+
+    @ViewBuilder private func customFontControls() -> some View {
+        Toggle("karaoke_custom_font".localized, isOn: $karaokeOptions.customFontEnabled)
+        if karaokeOptions.customFontEnabled {
+            VStack(alignment: .leading, spacing: 8) {
+                TextField("https://example.com/font.ttf", text: $fontURLDraft)
+                    .keyboardType(.URL).autocapitalization(.none).disableAutocorrection(true)
+                    .accessibilityLabel("karaoke_font_url".localized)
+                HStack {
+                    Button("karaoke_font_load".localized) {
+                        let url = fontURLDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+                        if karaokeOptions.customFontURL == url { lyricFont.configure(karaokeOptions, force: true) }
+                        else { karaokeOptions.customFontURL = url }
+                    }.disabled(fontURLDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    if lyricFont.loading { ProgressView() }
+                }
+                Text("karaoke_font_help".localized).font(.caption).foregroundColor(.gray)
+                if !lyricFont.status.isEmpty {
+                    Text(lyricFont.status).font(.caption).foregroundColor(lyricFont.failed ? .red : .gray)
+                }
+            }
+        }
     }
 
     @ViewBuilder private func karaokeAppearanceSection() -> some View {
@@ -52,10 +119,10 @@ struct EeveeLyricsSettingsView: View {
             Toggle("allow_screen_recording".localized, isOn: $karaokeOptions.allowScreenRecording)
 
             if karaokeOptions.enabled {
-                Toggle("karaoke_space_gravity".localized, isOn: $karaokeOptions.spaceGravityMode)
-                if karaokeOptions.spaceGravityMode {
-                    Text("karaoke_space_gravity_help".localized).font(.caption).foregroundColor(.gray)
-                }
+                gravityControls()
+                wordSplittingControls()
+                Toggle("karaoke_smooth_scrolling".localized, isOn: $karaokeOptions.smoothScrolling)
+                customFontControls()
                 Picker("karaoke_alignment".localized, selection: $karaokeOptions.textAlignment) {
                     ForEach(KaraokeTextAlignment.allCases, id: \.self) { alignment in
                         Text(alignment.displayName).tag(alignment)

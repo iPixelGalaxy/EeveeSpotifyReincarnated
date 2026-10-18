@@ -86,7 +86,7 @@ private final class KaraokeGravityField: UIView, UIGestureRecognizerDelegate {
             let speed = (4.4 + gravityRandom(seed &+ 3) * 5.6) * multiplier
             velocity = CGVector(dx: cos(direction) * speed, dy: sin(direction) * speed)
             spin = (gravityRandom(seed &+ 2) * 2 - 1) * 19 * .pi / 180
-            radius = max(14, hypot(canvas.bounds.width, canvas.bounds.height) * 0.5 + canvas.bounds.height * 0.3)
+            radius = plan.collisionRadius
         }
     }
 
@@ -152,7 +152,7 @@ private final class KaraokeGravityField: UIView, UIGestureRecognizerDelegate {
     }
 
     func configure(layouts: [KaraokeLineLayout], options: KaraokeOptions) {
-        let key = "\(options.textScale):\(options.textAlignment.rawValue)|" + layouts.map { line in
+        let key = "\(KaraokeFont.shared.revision):\(options.textScale):\(options.textAlignment.rawValue)|" + layouts.map { line in
             "\(line.startMs):\(line.endMs):\(line.isRTL):\(line.isInterlude):\(line.isBackground):\(line.isOppositeAligned)|" +
                 line.words.map { $0.map { "\($0.text):\($0.startMs):\($0.endMs)" }.joined(separator: "\u{1f}") }.joined(separator: "\u{1e}")
         }.joined(separator: "\n")
@@ -172,11 +172,11 @@ private final class KaraokeGravityField: UIView, UIGestureRecognizerDelegate {
             if !line.isBackground && !line.isInterlude { parent = index; leadLines.append(index) }
             let entities: [[KaraokeSyllableDto]]
             if line.isInterlude {
-                entities = (0..<3).map { dot in
+                entities = [(0..<3).map { dot in
                     let duration = max(1, line.endMs - line.startMs)
-                    return [KaraokeSyllableDto(text: "●", startMs: line.startMs + duration * dot / 3,
-                                              endMs: line.startMs + duration * (dot + 1) / 3, isPartOfWord: false)]
-                }
+                    return KaraokeSyllableDto(text: "●", startMs: line.startMs + duration * dot / 3,
+                                              endMs: line.startMs + duration * (dot + 1) / 3, isPartOfWord: false)
+                }]
             } else {
                 entities = line.words.flatMap { gravityWords($0) }
             }
@@ -352,13 +352,13 @@ private final class KaraokeGravityField: UIView, UIGestureRecognizerDelegate {
 
     private func spawn(_ word: Word, now: TimeInterval) {
         let line = layouts[word.line]
-        let text = word.syllables.map { $0.text.trimmingCharacters(in: .whitespacesAndNewlines) }.joined()
+        let text = word.syllables.map { $0.text.trimmingCharacters(in: .whitespacesAndNewlines) }.joined(separator: word.dot ? " " : "")
         let font = fontSize * (word.dot ? 0.5 : (line.isBackground ? 0.72 : 1))
-        let width = min(max(1, bounds.width - 36), ceil((text as NSString).size(withAttributes: [.font: UIFont.systemFont(ofSize: font, weight: .bold)]).width) + font * 0.3 + 4)
+        let width = min(max(1, bounds.width - 36), ceil((text as NSString).size(withAttributes: [.font: KaraokeFont.shared.font(ofSize: font)]).width) + font * 0.3 + 4)
         let color: UIColor = line.isOppositeAligned ? UIColor(red: 1, green: 140.0 / 255, blue: 168.0 / 255, alpha: 1) : .white
-        let plan = KaraokeTextPlan(words: [word.syllables], width: width, fontSize: font,
+        let plan = KaraokeTextPlan(words: word.dot ? word.syllables.map { [$0] } : [word.syllables], width: width, fontSize: font,
                                    alignment: .leading, rtl: line.isRTL, inkColor: color)
-        let canvas = KaraokeTextCanvas(frame: CGRect(x: 0, y: 0, width: width, height: plan.height))
+        let canvas = KaraokeTextCanvas(frame: CGRect(origin: .zero, size: plan.drawingSize))
         canvas.alpha = 0
         canvas.isUserInteractionEnabled = !word.dot
         if word.dot { canvas.isAccessibilityElement = false }
@@ -379,12 +379,12 @@ private final class KaraokeGravityField: UIView, UIGestureRecognizerDelegate {
         if let cached = linePositions[word.line]?[word.id] { return cached }
         let line = layouts[word.line]
         let font = fontSize * (word.dot ? 0.5 : (line.isBackground ? 0.72 : 1))
-        let nativeFont = UIFont.systemFont(ofSize: font, weight: .bold)
+        let nativeFont = KaraokeFont.shared.font(ofSize: font)
         var rows = [[(id: Int, size: CGSize)]]()
         var row = [(id: Int, size: CGSize)]()
         var rowWidth: CGFloat = 0
         for item in words where item.line == word.line {
-            let text = item.syllables.map { $0.text.trimmingCharacters(in: .whitespacesAndNewlines) }.joined()
+            let text = item.syllables.map { $0.text.trimmingCharacters(in: .whitespacesAndNewlines) }.joined(separator: item.dot ? " " : "")
             let measured = (text as NSString).size(withAttributes: [.font: nativeFont])
             let size = CGSize(width: min(max(1, bounds.width - 36), ceil(measured.width) + font * 0.3 + 4),
                               height: ceil(nativeFont.lineHeight) + 2)
@@ -468,7 +468,7 @@ private final class KaraokeGravityField: UIView, UIGestureRecognizerDelegate {
         let strength = 0.82 + pow(gravityRandom(body.seed &+ UInt32(truncatingIfNeeded: body.bounces)), 2) * (2.4 - 0.82)
         body.bounces &+= 1
         let flick = body.flingUntil > (lastStamp ?? 0)
-        let rebound = direction * (flick ? min(1800, abs(velocity) * 0.985)
+        let rebound = direction * 0.2 * (flick ? min(1800, abs(velocity) * 0.985)
             : min(16 * 2.4 * body.speedMultiplier, abs(velocity) * strength))
         if horizontal { body.velocity.dx = rebound } else { body.velocity.dy = rebound }
     }
@@ -478,7 +478,7 @@ private final class KaraokeGravityField: UIView, UIGestureRecognizerDelegate {
         accessibilityElements = ordered.filter { !$0.word.dot }.map { $0.canvas }
         var x: CGFloat = 18, y: CGFloat = 18, rowHeight: CGFloat = 0
         for body in ordered {
-            let width = body.canvas.bounds.width * body.scale, height = body.canvas.bounds.height * body.scale
+            let width = body.plan.layoutWidth * body.scale, height = body.plan.height * body.scale
             if x + width > bounds.width - 18 && x > 18 { x = 18; y += rowHeight + 12; rowHeight = 0 }
             body.position = CGPoint(x: x + width / 2, y: y + height / 2)
             body.angle = 0
@@ -514,11 +514,41 @@ private func gravityWords(_ word: [KaraokeSyllableDto]) -> [[KaraokeSyllableDto]
     let text = word.map { $0.text.trimmingCharacters(in: .whitespacesAndNewlines) }.joined()
     guard !text.isEmpty else { return [] }
     let cjk = text.unicodeScalars.contains { (0x3040...0x30FF).contains($0.value) || (0x3400...0x9FFF).contains($0.value) || (0xAC00...0xD7AF).contains($0.value) }
-    guard cjk || text.rangeOfCharacter(from: .whitespacesAndNewlines) != nil else { return [word] }
-    let tokenizer = NLTokenizer(unit: .word)
-    tokenizer.string = text
-    let ranges = tokenizer.tokens(for: text.startIndex..<text.endIndex)
-    guard ranges.count > 1 else { return [word] }
+    let dashes = CharacterSet(charactersIn: "-‐‑‒–—―")
+    let hasDash = text.rangeOfCharacter(from: dashes) != nil
+    let tokenize = cjk || text.rangeOfCharacter(from: .whitespacesAndNewlines) != nil
+    guard tokenize || hasDash else { return [word] }
+    var boundaries = Set([0, text.utf16.count])
+    if tokenize {
+        let tokenizer = NLTokenizer(unit: .word)
+        tokenizer.string = text
+        for range in tokenizer.tokens(for: text.startIndex..<text.endIndex).dropFirst() {
+            boundaries.insert(NSRange(text.startIndex..<range.lowerBound, in: text).length)
+        }
+    }
+    if hasDash {
+        // Match the fork's authored boundaries without changing their original timestamps.
+        var offset = 0
+        for index in word.indices {
+            let part = word[index].text.trimmingCharacters(in: .whitespacesAndNewlines)
+            offset += part.utf16.count
+            guard index + 1 < word.count else { continue }
+            let next = word[index + 1].text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if part.unicodeScalars.last.map({ dashes.contains($0) }) == true ||
+                next.unicodeScalars.first.map({ dashes.contains($0) }) == true { boundaries.insert(offset) }
+        }
+        // Untimed providers can put a whole Oh-oh-oh phrase in one syllable.
+        if let separator = try? NSRegularExpression(pattern: #"(?<=[\p{L}\p{N}])[-‐‑‒–—―]+(?=[\p{L}\p{N}])"#) {
+            for match in separator.matches(in: text, range: NSRange(text.startIndex..<text.endIndex, in: text)) {
+                boundaries.insert(NSMaxRange(match.range))
+            }
+        }
+    }
+    if cjk, boundaries.count == 2, text.count > 1 {
+        for index in text.indices.dropFirst() { boundaries.insert(NSRange(text.startIndex..<index, in: text).length) }
+    }
+    let cuts = boundaries.sorted()
+    guard cuts.count > 2 else { return [word] }
     var source = [(range: NSRange, syllable: KaraokeSyllableDto)]()
     var offset = 0
     for syllable in word {
@@ -527,10 +557,8 @@ private func gravityWords(_ word: [KaraokeSyllableDto]) -> [[KaraokeSyllableDto]
         offset += length
     }
     var result = [[KaraokeSyllableDto]]()
-    for index in ranges.indices {
-        let lower = index == 0 ? text.startIndex : ranges[index].lowerBound
-        let upper = index + 1 < ranges.count ? ranges[index + 1].lowerBound : text.endIndex
-        let range = NSRange(lower..<upper, in: text)
+    for index in 0..<(cuts.count - 1) {
+        let range = NSRange(location: cuts[index], length: cuts[index + 1] - cuts[index])
         var parts = [KaraokeSyllableDto]()
         for item in source {
             let overlap = NSIntersectionRange(range, item.range)

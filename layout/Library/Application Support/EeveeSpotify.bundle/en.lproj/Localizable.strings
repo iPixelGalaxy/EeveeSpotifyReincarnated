@@ -560,3 +560,26 @@ restart_later = "Later";
 
 "karaoke_space_gravity" = "Space Gravity";
 "karaoke_space_gravity_help" = "Float lyric words through space. Shake or turn your phone to move them. Motion pauses with Reduce Motion or VoiceOver enabled.";
+
+karaoke_smooth_scrolling = "Smooth Scrolling";
+karaoke_custom_font = "Custom Lyrics Font";
+karaoke_font_url = "Font URL";
+karaoke_font_load = "Load Font";
+karaoke_font_help = "Paste a direct TTF or OTF download URL. The font is saved for later playback.";
+karaoke_font_invalid_url = "Enter a valid font download URL.";
+karaoke_font_loading = "Loading font…";
+karaoke_font_loaded = "Loaded: %@";
+karaoke_font_failed = "Couldn't load the font. Check the URL and use a direct TTF or OTF file.";
+karaoke_settings = "Lyrics Settings";
+karaoke_back = "Back";
+karaoke_back_to_lyrics = "Back to lyrics";
+karaoke_motion_record = "Record 5-Second Motion Sample";
+karaoke_motion_recording = "Recording Motion…";
+karaoke_motion_help = "Hold still briefly, then perform your flick. Records five seconds of acceleration and rotation. You can go back to lyrics while recording.";
+karaoke_motion_share = "Share Motion Sample";
+karaoke_motion_ready = "Motion sample ready to share.";
+karaoke_motion_unavailable = "Motion recording isn't available on this device.";
+karaoke_motion_failed = "Couldn't save the motion sample. Try recording again.";
+karaoke_word_splitting = "Experimental Word Splitting";
+karaoke_word_splitting_gravity = "Space Gravity enables word splitting automatically. Generated word timing is approximate.";
+karaoke_word_splitting_help = "Estimate word timing inside timed lines and phrases. Existing word timing is preserved; generated timing is approximate.";
