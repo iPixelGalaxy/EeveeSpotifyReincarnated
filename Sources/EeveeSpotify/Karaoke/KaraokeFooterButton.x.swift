@@ -53,7 +53,7 @@ enum KaraokeFooterButton {
             row = nil
             if button.superview !== root { button.removeFromSuperview(); root.addSubview(button) }
             button.translatesAutoresizingMaskIntoConstraints = true
-            button.frame = CGRect(x: root.bounds.midX - 20, y: max(root.bounds.minY, root.bounds.maxY - 48), width: 40, height: 44)
+            button.frame = CGRect(x: max(root.bounds.minX, root.bounds.maxX - 56), y: max(root.bounds.minY, root.bounds.maxY - 48), width: 40, height: 44)
             update()
             return
         }
@@ -269,12 +269,5 @@ class KaraokeCompactVisibilityHook: ClassHook<UIView> {
     }
     func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
         orig.point(inside: point, with: event) || KaraokeOverlayPresenter.compactHit(point, in: target)
-    }
-}
-
-class KaraokeApplicationRotationHook: ClassHook<UIApplication> {
-    typealias Group = KaraokeFooterGroup
-    func supportedInterfaceOrientations(for window: UIWindow?) -> UIInterfaceOrientationMask {
-        KaraokeRotation.applicationMask(for: window) ?? orig.supportedInterfaceOrientations(for: window)
     }
 }

@@ -14,6 +14,8 @@ final class KaraokeLandscapeSidebar: UIScrollView {
         let translates: Bool
         let frame: CGRect
         let height: CGFloat
+        let transform: CGAffineTransform
+        let originalBounds: CGRect
         let controller: UIViewController?
         weak var controllerParent: UIViewController?
         let transfersController: Bool
@@ -42,6 +44,7 @@ final class KaraokeLandscapeSidebar: UIScrollView {
             arranged = (parent as? UIStackView)?.arrangedSubviews.contains(content) == true
             index = arranged ? ((parent as? UIStackView)?.arrangedSubviews.firstIndex(of: content) ?? 0) : (parent.subviews.firstIndex(of: content) ?? 0)
             frame = content.frame; height = max(32, content.bounds.height)
+            transform = content.transform; originalBounds = content.bounds
             translates = content.translatesAutoresizingMaskIntoConstraints
             var saved = [NSLayoutConstraint]()
             var ancestor: UIView? = parent
@@ -70,6 +73,8 @@ final class KaraokeLandscapeSidebar: UIScrollView {
                 if let controller, let controllerParent { controllerParent.addChild(controller) }
             }
             guard let parent, !transfersController || controllerParent != nil else { return }
+            view.transform = transform
+            view.bounds = originalBounds
             view.translatesAutoresizingMaskIntoConstraints = translates
             if arranged, let stack = parent as? UIStackView { stack.insertArrangedSubview(view, at: min(index, stack.arrangedSubviews.count)) }
             else { parent.insertSubview(view, at: min(index, parent.subviews.count)) }
@@ -145,13 +150,20 @@ final class KaraokeLandscapeSidebar: UIScrollView {
         super.layoutSubviews()
         let rows = Unit.allCases.compactMap { placements[$0] }
         let rowHeight = rows.reduce(CGFloat(0)) { $0 + $1.height }
-        let side = max(80, min(bounds.width - 8, bounds.height - rowHeight - CGFloat(rows.count) * 6 - 8))
+        let gaps = CGFloat(rows.count) * 4 + 8
+        let desiredArtwork = min(bounds.width - 8, bounds.height * 0.64)
+        let scale = rowHeight > 0 ? min(0.65, max(0.45, (bounds.height - desiredArtwork - gaps) / rowHeight)) : 0.65
+        let side = max(80, min(bounds.width - 8, bounds.height - rowHeight * scale - gaps))
         artwork.frame = CGRect(x: (bounds.width - side) / 2, y: 0, width: side, height: side)
-        var y = side + 6
+        var y = side + 8
         for row in rows {
-            let target = CGRect(x: 0, y: y, width: bounds.width, height: row.height)
-            if row.view.frame != target { row.view.frame = target }
-            y += row.height + 6
+            let transform = CGAffineTransform(scaleX: scale, y: scale)
+            if row.view.transform != transform { row.view.transform = transform }
+            let size = CGSize(width: bounds.width / scale, height: row.height)
+            if row.view.bounds.size != size { row.view.bounds.size = size }
+            let center = CGPoint(x: bounds.width / 2, y: y + row.height * scale / 2)
+            if row.view.center != center { row.view.center = center }
+            y += row.height * scale + 4
         }
         contentSize = CGSize(width: bounds.width, height: y)
     }

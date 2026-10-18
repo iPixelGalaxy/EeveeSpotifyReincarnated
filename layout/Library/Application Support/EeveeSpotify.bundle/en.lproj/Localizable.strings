@@ -591,3 +591,5 @@ karaoke_footer_gravity = "Space Gravity already pins the full footer. These mode
 karaoke_footer_writers_scroll = "Pin source and contributor credits. Songwriters remain at the end of the lyrics.";
 karaoke_experimental_timing = "Experimental word timing";
 karaoke_album_art = "Album artwork";
+karaoke_landscape_header_offset = "Landscape header offset";
+karaoke_landscape_header_offset_help = "Moves the top buttons and title vertically in landscape. Negative values move them up.";

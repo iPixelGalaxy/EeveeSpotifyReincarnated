@@ -18,6 +18,9 @@ final class KaraokeOverlayPresenter {
     private static let viewport = KaraokeViewport()
     private static var landscapeSidebar: KaraokeLandscapeSidebar?
     private static var updatingFrame = false
+    private static var wideClipping: [ObjectIdentifier: VideoState] = [:]
+    private static weak var wideHeader: UIView?
+    private static var wideHeaderTransform = CGAffineTransform.identity
     private static var isLandscape: Bool {
         guard let window = canvas?.window else { return false }
         return window.bounds.width > window.bounds.height
@@ -84,12 +87,17 @@ final class KaraokeOverlayPresenter {
         objc_getAssociatedObject(view, &compactVisibilityKey) == nil ? value : false
     }
     static func lockedCompactClipping(_ value: Bool, in view: UIView) -> Bool {
-        objc_getAssociatedObject(view, &compactVisibilityKey) == nil ? value : false
+        if wideClipping[ObjectIdentifier(view)]?.view === view { return false }
+        return objc_getAssociatedObject(view, &compactVisibilityKey) == nil ? value : false
     }
     static func lockedCompactTransform(_ value: CGAffineTransform, in view: UIView) -> CGAffineTransform {
         (objc_getAssociatedObject(view, &compactTransformKey) as? NSValue)?.cgAffineTransformValue ?? value
     }
     static func compactHit(_ point: CGPoint, in view: UIView) -> Bool {
+        if wideClipping[ObjectIdentifier(view)]?.view === view, let container {
+            if container.isDescendant(of: view), container.point(inside: container.convert(point, from: view), with: nil) { return true }
+            if let header, header.isDescendant(of: view), unitFrame(header, in: view)?.contains(point) == true { return true }
+        }
         guard focused, objc_getAssociatedObject(view, &compactVisibilityKey) != nil, let controls else { return false }
         return controls.convert(controls.bounds, to: view).contains(point)
     }
@@ -554,17 +562,61 @@ final class KaraokeOverlayPresenter {
         return unit.convert(unit.bounds, to: canvas)
     }
 
+    private static func planeFrame(in canvas: UIView) -> CGRect {
+        guard isLandscape, let window = canvas.window else { return canvas.bounds }
+        return canvas.convert(window.bounds, from: window)
+    }
+
+    private static func allowWideClipping(from view: UIView?) {
+        var current = view
+        while let item = current, !(item is UIWindow) {
+            let id = ObjectIdentifier(item)
+            if wideClipping[id]?.view !== item { wideClipping[id] = VideoState(item) }
+            if item.clipsToBounds { item.clipsToBounds = false }
+            current = item.superview
+        }
+    }
+
+    private static func applyWideGeometry() {
+        guard let canvas, let window = canvas.window else { return }
+        allowWideClipping(from: canvas)
+        if wideHeader !== header {
+            wideHeader?.transform = wideHeaderTransform
+            wideHeader = header
+            wideHeaderTransform = header?.transform ?? .identity
+        }
+        guard let header, let parent = header.superview, let box = unitFrame(header, in: window) else { return }
+        allowWideClipping(from: parent)
+        let desired = window.bounds.minY + 8 + CGFloat(UserDefaults.karaokeOptions.landscapeHeaderOffset)
+        let correction = desired - box.minY
+        if abs(correction) > 0.25 {
+            let origin = parent.convert(CGPoint.zero, from: window)
+            let shifted = parent.convert(CGPoint(x: 0, y: correction), from: window)
+            header.transform = header.transform.concatenating(CGAffineTransform(translationX: shifted.x - origin.x, y: shifted.y - origin.y))
+        }
+    }
+
+    private static func restoreWideGeometry() {
+        wideHeader?.transform = wideHeaderTransform
+        wideHeader = nil
+        let saved = wideClipping
+        wideClipping.removeAll()
+        for state in saved.values { state.view?.clipsToBounds = state.clips }
+    }
+
     private static func landscapeFrames(in canvas: UIView) -> (sidebar: CGRect, lyrics: CGRect)? {
         guard let window = canvas.window, window.bounds.width > window.bounds.height else { return nil }
         let safe = window.safeAreaLayoutGuide.layoutFrame
         let headerBottom = header.flatMap { unitFrame($0, in: window)?.maxY } ?? safe.minY + 40
-        let top = max(safe.minY + 6, headerBottom + 4)
-        let body = CGRect(x: safe.minX + 12, y: top, width: max(1, safe.width - 24), height: max(1, safe.maxY - top - 8))
-        let left = min(300, max(190, body.width * 0.31))
+        let top = max(window.bounds.minY + 8, headerBottom + 6)
+        let leading = max(window.bounds.minX + 14, safe.minX + 6)
+        let body = CGRect(x: leading, y: top, width: max(1, window.bounds.maxX - leading - 14), height: max(1, safe.maxY - top - 8))
+        let left = min(290, max(240, window.bounds.width * 0.29))
         let sidebar = CGRect(x: body.minX, y: body.minY, width: left, height: body.height)
         let lyrics = CGRect(x: sidebar.maxX + 20, y: body.minY, width: max(1, body.width - left - 20), height: body.height)
         func local(_ rect: CGRect) -> CGRect {
-            canvas.convert(rect, from: window).offsetBy(dx: -canvas.bounds.minX, dy: -canvas.bounds.minY)
+            let bounds = planeFrame(in: canvas)
+            return canvas.convert(rect, from: window).offsetBy(dx: -bounds.minX, dy: -bounds.minY)
         }
         return (local(sidebar), local(lyrics))
     }
@@ -623,8 +675,8 @@ final class KaraokeOverlayPresenter {
         guard !updatingFrame else { return }
         updatingFrame = true
         defer { updatingFrame = false }
-        if !isLandscape { restoreLandscape() }
-        if isLandscape { setFocused(false) }
+        if !isLandscape { restoreLandscape(); restoreWideGeometry() }
+        if isLandscape { setFocused(false); applyWideGeometry() }
         refreshFocusGeometry()
         guard let canvas, let container, let hosting else { return }
         guard canvas.window != nil, let frame = lyricsFrame(in: canvas) else {
@@ -644,7 +696,8 @@ final class KaraokeOverlayPresenter {
         }
         KaraokeRotation.update(controller: hosting.parent, enabled: isPresented)
         if viewport.landscape != isLandscape { viewport.landscape = isLandscape }
-        if container.frame != canvas.bounds { container.frame = canvas.bounds }
+        let bounds = planeFrame(in: canvas)
+        if container.frame != bounds { container.frame = bounds }
         if hosting.view.frame != container.bounds { hosting.view.frame = container.bounds }
         container.activeRect = frame
         if viewport.frame != frame { viewport.frame = frame }
@@ -784,6 +837,7 @@ final class KaraokeOverlayPresenter {
         idleWork?.cancel()
         setFocused(false)
         restoreLandscape()
+        restoreWideGeometry()
         KaraokeRotation.update(controller: hosting?.parent, enabled: false)
         for saved in outerScrolls.values {
             saved.view?.isScrollEnabled = saved.enabled

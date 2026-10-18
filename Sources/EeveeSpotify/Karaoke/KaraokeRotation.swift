@@ -1,81 +1,92 @@
 import UIKit
 import ObjectiveC.runtime
 
-/// Allow rotation only while the embedded lyric player owns this window.
+/// Spotify-wide rotation, including controllers which override UIKit's default mask.
 enum KaraokeRotation {
-    private static weak var window: UIWindow?
+    private static var active = false
     private static var patchedClasses = Set<ObjectIdentifier>()
-    private static var generation = 0
+    private static var patchedDelegates = Set<ObjectIdentifier>()
 
-    static func applicationMask(for candidate: UIWindow?) -> UIInterfaceOrientationMask? {
-        if let window, candidate == nil || candidate === window { return .allButUpsideDown }
-        // Preserve native delegate policies, including any fullscreen video support.
-        let delegateHandlesRotation = UIApplication.shared.delegate?.responds(to: NSSelectorFromString("application:supportedInterfaceOrientationsForWindow:")) == true
-        return UIDevice.current.userInterfaceIdiom == .phone && !delegateHandlesRotation ? .portrait : nil
-    }
-
-    static func update(controller: UIViewController?, enabled: Bool) {
-        let next = enabled ? controller?.viewIfLoaded?.window : nil
-        guard window !== next else { return }
-        let previous = window
-        window = next
-        generation += 1
-        let token = generation
-        guard let target = next ?? previous else { return }
-        var controllers = [UIViewController]()
-        var root = target.rootViewController
-        while let current = root { controllers.append(current); root = current.presentedViewController }
-        var parent = controller
-        while let current = parent { controllers.append(current); parent = current.parent }
-        if enabled { controllers.forEach { install(on: type(of: $0)) } }
-        if #available(iOS 16.0, *) {
-            controllers.forEach { $0.setNeedsUpdateOfSupportedInterfaceOrientations() }
-            DispatchQueue.main.async { [weak target] in
-                guard generation == token, let scene = target?.windowScene else { return }
-                // Let iPad retain its native orientation when the lyric player closes.
-                guard enabled || UIDevice.current.userInterfaceIdiom == .phone else { return }
-                let mask: UIInterfaceOrientationMask
-                switch enabled ? UIDevice.current.orientation : .portrait {
-                case .landscapeLeft: mask = .landscapeRight
-                case .landscapeRight: mask = .landscapeLeft
-                case .portrait, .portraitUpsideDown: mask = .portrait
-                default:
-                    switch scene.interfaceOrientation {
-                    case .landscapeLeft: mask = .landscapeLeft
-                    case .landscapeRight: mask = .landscapeRight
-                    default: mask = .portrait
+    static func activate() {
+        guard !active else { return }
+        active = true
+        KaraokeGlobalRotationGroup().activate()
+        install(on: UIViewController.self)
+        DispatchQueue.main.async {
+            installDelegate(UIApplication.shared.delegate)
+            for scene in UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }) {
+                for window in scene.windows {
+                    if let root = window.rootViewController { prepareTree(root) }
+                }
+                if #available(iOS 16.0, *) {
+                    scene.requestGeometryUpdate(.iOS(interfaceOrientations: .allButUpsideDown)) { error in
+                        writeDebugLog("[Rotation] \(error.localizedDescription)")
                     }
                 }
-                scene.requestGeometryUpdate(.iOS(interfaceOrientations: mask)) { error in
-                    writeDebugLog("[Karaoke][rotation] \(error.localizedDescription)")
-                }
             }
-        } else {
-            UIViewController.attemptRotationToDeviceOrientation()
         }
+    }
+
+    static func prepare(_ controller: UIViewController) {
+        var current: UIViewController? = controller
+        while let item = current {
+            let type = Swift.type(of: item)
+            let changed = !patchedClasses.contains(ObjectIdentifier(type))
+            install(on: type)
+            if changed, #available(iOS 16.0, *) { item.setNeedsUpdateOfSupportedInterfaceOrientations() }
+            current = item.parent
+        }
+    }
+
+    private static func prepareTree(_ controller: UIViewController) {
+        prepare(controller)
+        controller.children.forEach(prepareTree)
+        if let presented = controller.presentedViewController { prepareTree(presented) }
+    }
+
+    // Existing lyric-player callers must no longer force portrait when lyrics close.
+    static func update(controller: UIViewController?, enabled _: Bool) {
+        if let controller { prepare(controller) }
+    }
+
+    static func installDelegate(_ delegate: AnyObject?) {
+        guard let delegate, let type = object_getClass(delegate),
+              patchedDelegates.insert(ObjectIdentifier(type)).inserted else { return }
+        let selector = NSSelectorFromString("application:supportedInterfaceOrientationsForWindow:")
+        guard let method = class_getInstanceMethod(type, selector) else { return }
+        let block: @convention(block) (AnyObject, UIApplication, UIWindow?) -> UInt = { _, _, _ in
+            UIInterfaceOrientationMask.allButUpsideDown.rawValue
+        }
+        class_replaceMethod(type, selector, imp_implementationWithBlock(block), method_getTypeEncoding(method))
     }
 
     private static func install(on type: AnyClass) {
         guard patchedClasses.insert(ObjectIdentifier(type)).inserted else { return }
-        let maskSelector = #selector(getter: UIViewController.supportedInterfaceOrientations)
-        if let method = class_getInstanceMethod(type, maskSelector) {
-            let original = method_getImplementation(method)
-            let block: @convention(block) (UIViewController) -> UInt = { controller in
-                if let window, controller.viewIfLoaded?.window === window { return UIInterfaceOrientationMask.allButUpsideDown.rawValue }
-                typealias Getter = @convention(c) (AnyObject, Selector) -> UInt
-                return unsafeBitCast(original, to: Getter.self)(controller, maskSelector)
-            }
-            class_replaceMethod(type, maskSelector, imp_implementationWithBlock(block), method_getTypeEncoding(method))
+        let mask = #selector(getter: UIViewController.supportedInterfaceOrientations)
+        if let method = class_getInstanceMethod(type, mask) {
+            let block: @convention(block) (UIViewController) -> UInt = { _ in UIInterfaceOrientationMask.allButUpsideDown.rawValue }
+            class_replaceMethod(type, mask, imp_implementationWithBlock(block), method_getTypeEncoding(method))
         }
-        let rotateSelector = #selector(getter: UIViewController.shouldAutorotate)
-        if let method = class_getInstanceMethod(type, rotateSelector) {
-            let original = method_getImplementation(method)
-            let block: @convention(block) (UIViewController) -> Bool = { controller in
-                if let window, controller.viewIfLoaded?.window === window { return true }
-                typealias Getter = @convention(c) (AnyObject, Selector) -> Bool
-                return unsafeBitCast(original, to: Getter.self)(controller, rotateSelector)
+        let autorotate = #selector(getter: UIViewController.shouldAutorotate)
+        if let method = class_getInstanceMethod(type, autorotate) {
+            let block: @convention(block) (UIViewController) -> Bool = { _ in true }
+            class_replaceMethod(type, autorotate, imp_implementationWithBlock(block), method_getTypeEncoding(method))
+        }
+        let preferred = #selector(getter: UIViewController.preferredInterfaceOrientationForPresentation)
+        if let method = class_getInstanceMethod(type, preferred) {
+            let block: @convention(block) (UIViewController) -> Int = { controller in
+                let scene = controller.viewIfLoaded?.window?.windowScene
+                    ?? controller.presentingViewController?.viewIfLoaded?.window?.windowScene
+                    ?? UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first { $0.activationState == .foregroundActive }
+                let orientation = scene?.interfaceOrientation ?? .portrait
+                return (orientation == .unknown ? UIInterfaceOrientation.portrait : orientation).rawValue
             }
-            class_replaceMethod(type, rotateSelector, imp_implementationWithBlock(block), method_getTypeEncoding(method))
+            class_replaceMethod(type, preferred, imp_implementationWithBlock(block), method_getTypeEncoding(method))
+        }
+        let lock = NSSelectorFromString("prefersInterfaceOrientationLocked")
+        if let method = class_getInstanceMethod(type, lock) {
+            let block: @convention(block) (UIViewController) -> Bool = { _ in false }
+            class_replaceMethod(type, lock, imp_implementationWithBlock(block), method_getTypeEncoding(method))
         }
     }
 }

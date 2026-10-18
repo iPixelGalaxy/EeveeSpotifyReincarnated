@@ -161,6 +161,15 @@ struct EeveeLyricsSettingsView: View {
                 }
                 VStack(alignment: .leading, spacing: 5) {
                     HStack {
+                        Text("karaoke_landscape_header_offset".localized)
+                        Spacer()
+                        Text(String(format: "%+.0f pt", karaokeOptions.landscapeHeaderOffset)).foregroundColor(.gray)
+                    }
+                    Slider(value: $karaokeOptions.landscapeHeaderOffset, in: -80...80, step: 1)
+                    Text("karaoke_landscape_header_offset_help".localized).font(.caption).foregroundColor(.gray)
+                }
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack {
                         Text("karaoke_blur_intensity".localized)
                         Spacer()
                         Text(String(format: "%.1f", karaokeOptions.blurIntensity))
