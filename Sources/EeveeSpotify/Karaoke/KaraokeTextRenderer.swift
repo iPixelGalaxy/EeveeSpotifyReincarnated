@@ -49,6 +49,9 @@ final class KaraokeTextPlan {
     let baseInk: CGColor
     let fillInks: [CGColor]
     let glowInks: [CGColor]
+    let sweepGradient: CGGradient?
+    let isInterlude: Bool
+    let usesLineTiming: Bool
     let startMs: Int
     let endMs: Int
     var segments: [Segment]
@@ -57,7 +60,14 @@ final class KaraokeTextPlan {
     init(words: [[KaraokeSyllableDto]], width: CGFloat, fontSize: CGFloat, alignment: HorizontalAlignment, rtl: Bool, inkColor: UIColor = .white,
          timingRange: ClosedRange<Int>? = nil, isInterlude: Bool = false) {
         self.inkColor = inkColor
+        self.isInterlude = isInterlude
         baseInk = inkColor.cgColor
+        let sweepColors = (0...8).map { index -> CGColor in
+            let p = CGFloat(index) / 8
+            let smooth = p * p * (3 - 2 * p)
+            return inkColor.withAlphaComponent(0.95 - 0.45 * smooth).cgColor
+        }
+        sweepGradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: sweepColors as CFArray, locations: nil)
         let dotOpacity = KaraokeAnimationCurve(points: [(0, 0.35), (0.6, 1), (1, 1)])
         fillInks = (0...64).map {
             let progress = Double($0) / 64
@@ -70,6 +80,7 @@ final class KaraokeTextPlan {
         let usesLineTiming = !all.isEmpty && all.allSatisfy {
             $0.startMs == lineStart && $0.endMs <= $0.startMs
         }
+        self.usesLineTiming = usesLineTiming
         startMs = lineStart
         endMs = lineEnd
         self.fontSize = fontSize
@@ -157,6 +168,16 @@ final class KaraokeTextPlan {
             var offset: CGFloat = 0
             for (rank, index) in ordered.enumerated() {
                 glyphs[index].rank = rank
+                glyphs[index].fraction = offset / total
+                glyphs[index].share = max(0.001, glyphs[index].advance / total)
+                offset += glyphs[index].advance
+            }
+        }
+        if usesLineTiming {
+            let ordered = glyphs.indices.sorted { glyphs[$0].stringIndex < glyphs[$1].stringIndex }
+            let total = max(1, ordered.reduce(CGFloat.zero) { $0 + glyphs[$1].advance })
+            var offset: CGFloat = 0
+            for index in ordered {
                 glyphs[index].fraction = offset / total
                 glyphs[index].share = max(0.001, glyphs[index].advance / total)
                 offset += glyphs[index].advance
@@ -380,6 +401,10 @@ final class KaraokeTextCanvas: UIView {
             let progress = min(1, max(0, Double(currentMs - part.highlightStartMs) / Double(max(1, part.highlightEndMs - part.highlightStartMs))))
             let glow = currentMs < part.highlightStartMs ? 0 : (currentMs <= part.highlightEndMs ? progress : max(0, 1 - Double(currentMs - part.highlightEndMs) / 350))
             let fill = plan.fillInks[min(64, max(0, Int(progress * 64)))]
+            // Feather over several letters, rather than cutting through one glyph.
+            let count = plan.usesLineTiming ? plan.glyphs.count : part.glyphs.count
+            let feather = max(0.10, min(0.5, 2.5 / Double(max(1, count))))
+            let front = CGFloat(-feather + progress * (1 + 2 * feather))
             let (matrix, _) = transform(for: glyph, in: plan)
             context.saveGState()
             context.concatenate(matrix)
@@ -390,6 +415,17 @@ final class KaraokeTextCanvas: UIView {
                 context.setFillColor(active ? fill : plan.baseInk)
                 context.addPath(path)
                 context.fillPath()
+                if active, !plan.isInterlude, progress > 0, progress < 1, let gradient = plan.sweepGradient {
+                    context.setShadow(offset: .zero, blur: 0, color: nil)
+                    context.addPath(path); context.clip()
+                    // Replace the foreground while retaining the glow outside its outline.
+                    context.setBlendMode(.copy)
+                    let origin = glyph.rtl ? glyph.bounds.maxX : glyph.bounds.minX
+                    let span = glyph.rtl ? -glyph.bounds.width : glyph.bounds.width
+                    let start = origin + span * (front - CGFloat(feather) - glyph.fraction) / glyph.share
+                    let end = origin + span * (front + CGFloat(feather) - glyph.fraction) / glyph.share
+                    context.drawLinearGradient(gradient, start: CGPoint(x: start, y: 0), end: CGPoint(x: end, y: 0), options: [.drawsBeforeStartLocation, .drawsAfterEndLocation])
+                }
             } else {
                 var value = glyph.value
                 var zero = CGPoint.zero

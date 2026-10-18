@@ -10,6 +10,7 @@ struct KaraokeSpaceGravityView: View {
     let layouts: [KaraokeLineLayout]
     let options: KaraokeOptions
     let size: CGSize
+    var showsCredits = true
     @State private var creditsHeight: CGFloat = 0
 
     var body: some View {
@@ -17,14 +18,16 @@ struct KaraokeSpaceGravityView: View {
             KaraokeGravityStage(layouts: layouts, options: options)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .clipped()
-            ScrollView(showsIndicators: false) {
-                KaraokeCreditsFooterView(lyrics: lyrics)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .background(GeometryReader { geometry in
-                        Color.clear.preference(key: KaraokeGravityCreditsHeight.self, value: geometry.size.height)
-                    })
+            if showsCredits {
+                ScrollView(showsIndicators: false) {
+                    KaraokeCreditsFooterView(lyrics: lyrics)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .background(GeometryReader { geometry in
+                            Color.clear.preference(key: KaraokeGravityCreditsHeight.self, value: geometry.size.height)
+                        })
+                }
+                .frame(height: min(creditsHeight, max(0, size.height * 0.28)))
             }
-            .frame(height: min(creditsHeight, max(0, size.height * 0.28)))
         }
         .onPreferenceChange(KaraokeGravityCreditsHeight.self) { height in
             if height.isFinite, abs(height - creditsHeight) > 0.5 { creditsHeight = height }

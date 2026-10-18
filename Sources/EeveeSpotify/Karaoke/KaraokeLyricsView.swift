@@ -3,6 +3,7 @@ import UIKit
 
 final class KaraokeViewport: ObservableObject {
     @Published var frame = CGRect.zero
+    @Published var landscape = false
 }
 
 @available(iOS 15.0, *)
@@ -77,10 +78,16 @@ struct KaraokeLyricsView: View {
         }
     }
 
+    private var displayOptions: KaraokeOptions {
+        var value = options
+        if viewport.landscape { value.pinnedFooterMode = .off }
+        return value
+    }
+
     @ViewBuilder
     private func content(lyrics: KaraokeLyricsDto, layouts: [KaraokeLineLayout], size: CGSize) -> some View {
         if options.spaceGravityMode {
-            KaraokeSpaceGravityView(lyrics: lyrics, layouts: layouts, options: options, size: size)
+            KaraokeSpaceGravityView(lyrics: lyrics, layouts: layouts, options: displayOptions, size: size, showsCredits: !viewport.landscape)
         } else {
             TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { _ in
                 let currentMs = KaraokePlaybackTracker.shared.currentPositionMs() + Int(options.timingOffsetMs)
@@ -88,7 +95,7 @@ struct KaraokeLyricsView: View {
                 KaraokeScrollingLines(
                     lyrics: lyrics,
                     layouts: layouts,
-                    options: options,
+                    options: displayOptions,
                     currentMs: currentMs,
                     activeLineIndex: activeLineIndex(in: lyrics, at: currentMs),
                     size: size

@@ -261,3 +261,10 @@ class KaraokeCompactVisibilityHook: ClassHook<UIView> {
         orig.point(inside: point, with: event) || KaraokeOverlayPresenter.compactHit(point, in: target)
     }
 }
+
+class KaraokeApplicationRotationHook: ClassHook<UIApplication> {
+    typealias Group = KaraokeFooterGroup
+    func supportedInterfaceOrientations(for window: UIWindow?) -> UIInterfaceOrientationMask {
+        KaraokeRotation.applicationMask(for: window) ?? orig.supportedInterfaceOrientations(for: window)
+    }
+}

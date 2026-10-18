@@ -5,7 +5,7 @@ import MetalKit
 @available(iOS 15.0, *)
 struct KaraokeBackgroundView: View {
     let trackId: String?
-    private static var lastImage: UIImage?
+    private(set) static var lastImage: UIImage?
     private static var lastFingerprint: Data?
 
     init(trackId: String?) {

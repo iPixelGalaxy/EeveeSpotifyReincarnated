@@ -590,3 +590,4 @@ karaoke_footer_full = "Full";
 karaoke_footer_gravity = "Space Gravity already pins the full footer. These modes apply to scrolling lyrics.";
 karaoke_footer_writers_scroll = "Pin source and contributor credits. Songwriters remain at the end of the lyrics.";
 karaoke_experimental_timing = "Experimental word timing";
+karaoke_album_art = "Album artwork";

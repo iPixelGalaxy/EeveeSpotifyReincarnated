@@ -43,6 +43,21 @@ patch_app() {
     local app="$1" plist="$1/Info.plist"
     [ -f "$plist" ] || { echo "[alt-icons] no Info.plist in $app" >&2; return 1; }
 
+    # The lyric player widens the runtime rotation mask only while it is visible.
+    # Declare both landscape orientations in every packaged app, including CI builds.
+    python3 - "$plist" <<'PYORIENTATION'
+import plistlib, sys
+path = sys.argv[1]
+with open(path, "rb") as source:
+    info = plistlib.load(source)
+orientations = info.setdefault("UISupportedInterfaceOrientations", ["UIInterfaceOrientationPortrait"])
+for value in ["UIInterfaceOrientationLandscapeLeft", "UIInterfaceOrientationLandscapeRight"]:
+    if value not in orientations:
+        orientations.append(value)
+with open(path, "wb") as destination:
+    plistlib.dump(info, destination, fmt=plistlib.FMT_BINARY)
+PYORIENTATION
+
     local names; names="$(icon_names)"
     [ -n "$names" ] || { echo "[alt-icons] nothing to register"; return 0; }
 

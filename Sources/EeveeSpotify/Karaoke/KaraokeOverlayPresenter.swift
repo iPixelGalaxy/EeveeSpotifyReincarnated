@@ -16,6 +16,12 @@ final class KaraokeOverlayPresenter {
     private static var hosting: UIViewController?
     private static var container: KaraokeCanvasContainer?
     private static let viewport = KaraokeViewport()
+    private static var landscapeSidebar: KaraokeLandscapeSidebar?
+    private static var updatingFrame = false
+    private static var isLandscape: Bool {
+        guard let window = canvas?.window else { return false }
+        return window.bounds.width > window.bounds.height
+    }
     private static weak var controls: UIView?
     private static weak var duration: UIView?
     private static var idleWork: DispatchWorkItem?
@@ -116,7 +122,8 @@ final class KaraokeOverlayPresenter {
     }
     static func dismissSwipeStart(_ touch: UITouch) -> (point: CGPoint, band: CGRect)? {
         guard isPresented, let canvas, let container, let touched = touch.view,
-              touched.isDescendant(of: container), let band = dismissalBand() else { return nil }
+              touched.isDescendant(of: container), let hosted = hosting?.view,
+              touched.isDescendant(of: hosted), let band = dismissalBand() else { return nil }
         let raw = touch.location(in: canvas)
         let point = CGPoint(x: raw.x - canvas.bounds.minX, y: raw.y - canvas.bounds.minY)
         guard point.y >= 0, point.y < canvas.bounds.height * 0.35 else { return nil }
@@ -135,7 +142,7 @@ final class KaraokeOverlayPresenter {
 
     static func nativeTouchBegan(_ touch: UITouch) -> Bool {
         guard isPresented else { return false }
-        if let touched = touch.view, let container, touched.isDescendant(of: container) { return false }
+        if let touched = touch.view, let hosted = hosting?.view, touched.isDescendant(of: hosted) { return false }
         nativeTouchActive = true
         compactTouch = focused && touch.view.map { touched in controls.map { touched.isDescendant(of: $0) } ?? false } == true
         idleWork?.cancel()
@@ -159,6 +166,7 @@ final class KaraokeOverlayPresenter {
         if isPresented {
             view.alpha = 1; view.isUserInteractionEnabled = true
             if focused { layoutCompactControls() }
+            if isLandscape { updateFrame() }
         }
     }
     static func registerDuration(_ view: UIView) {
@@ -326,7 +334,7 @@ final class KaraokeOverlayPresenter {
             }
         }
         for view in [controls, footer].compactMap({ $0 }) {
-            let hidden = focused && view === footer && canHideFooter
+            let hidden = (focused || isLandscape) && view === footer && canHideFooter
             view.alpha = hidden ? 0 : 1
             view.isUserInteractionEnabled = !hidden
         }
@@ -338,9 +346,12 @@ final class KaraokeOverlayPresenter {
         idleWork?.cancel()
         setFocused(false)
         if isPresented {
-            for view in [controls, footer].compactMap({ $0 }) { view.alpha = 1; view.isUserInteractionEnabled = true }
+            for view in [controls, footer].compactMap({ $0 }) {
+                let hidden = isLandscape && view === footer && canHideFooter
+                view.alpha = hidden ? 0 : 1; view.isUserInteractionEnabled = !hidden
+            }
         }
-        guard isPresented, isEnabled, !dragging, !nativeTouchActive, !suspended else { return }
+        guard isPresented, isEnabled, !isLandscape, !dragging, !nativeTouchActive, !suspended else { return }
         let work = DispatchWorkItem {
             if isPresented && isEnabled && UIApplication.shared.applicationState == .active && !UIAccessibility.isVoiceOverRunning { setFocused(true) }
         }
@@ -393,6 +404,7 @@ final class KaraokeOverlayPresenter {
     }
 
     private static func setFocused(_ value: Bool) {
+        guard !value || !isLandscape else { return }
         guard focused != value else { return }
         if value {
             if let controller = playerRoot?.next as? UIViewController { recoverNativeUnits(in: controller) }
@@ -466,8 +478,8 @@ final class KaraokeOverlayPresenter {
         if focused, nativeStates[ObjectIdentifier(root)]?.view !== root { nativeStates[ObjectIdentifier(root)] = NativeState(root) }
         footer = root
         if isPresented {
-            root.alpha = focused && canHideFooter ? 0 : 1
-            root.isUserInteractionEnabled = !focused || !canHideFooter
+            root.alpha = (focused || isLandscape) && canHideFooter ? 0 : 1
+            root.isUserInteractionEnabled = !(focused || isLandscape) || !canHideFooter
         }
         restoreIfNeeded()
     }
@@ -507,7 +519,31 @@ final class KaraokeOverlayPresenter {
         return unit.convert(unit.bounds, to: canvas)
     }
 
+    private static func landscapeFrames(in canvas: UIView) -> (sidebar: CGRect, lyrics: CGRect)? {
+        guard let window = canvas.window, window.bounds.width > window.bounds.height else { return nil }
+        let safe = window.safeAreaLayoutGuide.layoutFrame
+        let headerBottom = header.flatMap { unitFrame($0, in: window)?.maxY } ?? safe.minY + 40
+        let top = max(safe.minY + 6, headerBottom + 4)
+        let body = CGRect(x: safe.minX + 12, y: top, width: max(1, safe.width - 24), height: max(1, safe.maxY - top - 8))
+        let left = min(300, max(190, body.width * 0.31))
+        let sidebar = CGRect(x: body.minX, y: body.minY, width: left, height: body.height)
+        let lyrics = CGRect(x: sidebar.maxX + 20, y: body.minY, width: max(1, body.width - left - 20), height: body.height)
+        func local(_ rect: CGRect) -> CGRect {
+            canvas.convert(rect, from: window).offsetBy(dx: -canvas.bounds.minX, dy: -canvas.bounds.minY)
+        }
+        return (local(sidebar), local(lyrics))
+    }
+
+    private static func restoreLandscape() {
+        guard let sidebar = landscapeSidebar else { return }
+        landscapeSidebar = nil
+        container?.sidebar = nil
+        sidebar.restore()
+        footer?.alpha = 1; footer?.isUserInteractionEnabled = true
+    }
+
     private static func lyricsFrame(in canvas: UIView) -> CGRect? {
+        if let wide = landscapeFrames(in: canvas) { return wide.lyrics }
         guard let window = canvas.window, let information,
               information.window === window, canvas.bounds.width > 100,
               let infoFrame = unitFrame(information, in: canvas) else { return nil }
@@ -546,6 +582,11 @@ final class KaraokeOverlayPresenter {
     }
 
     private static func updateFrame() {
+        guard !updatingFrame else { return }
+        updatingFrame = true
+        defer { updatingFrame = false }
+        if !isLandscape { restoreLandscape() }
+        if isLandscape { setFocused(false) }
         refreshFocusGeometry()
         guard let canvas, let container, let hosting else { return }
         guard canvas.window != nil, let frame = lyricsFrame(in: canvas) else {
@@ -553,6 +594,18 @@ final class KaraokeOverlayPresenter {
             return
         }
         container.isHidden = false
+        if let wide = landscapeFrames(in: canvas) {
+            let sidebar = landscapeSidebar ?? KaraokeLandscapeSidebar(frame: wide.sidebar)
+            if landscapeSidebar == nil { landscapeSidebar = sidebar; container.addSubview(sidebar); container.sidebar = sidebar }
+            if sidebar.frame != wide.sidebar { sidebar.frame = wide.sidebar }
+            sidebar.attach(information, as: .information)
+            sidebar.attach(duration, as: .duration)
+            sidebar.attach(controls, as: .controls)
+            sidebar.setNeedsLayout()
+            if canHideFooter { footer?.alpha = 0; footer?.isUserInteractionEnabled = false }
+        }
+        KaraokeRotation.update(controller: hosting.parent, enabled: isPresented)
+        if viewport.landscape != isLandscape { viewport.landscape = isLandscape }
         if container.frame != canvas.bounds { container.frame = canvas.bounds }
         if hosting.view.frame != container.bounds { hosting.view.frame = container.bounds }
         container.activeRect = frame
@@ -692,6 +745,8 @@ final class KaraokeOverlayPresenter {
         nativeMonitor = nil
         idleWork?.cancel()
         setFocused(false)
+        restoreLandscape()
+        KaraokeRotation.update(controller: hosting?.parent, enabled: false)
         for saved in outerScrolls.values {
             saved.view?.isScrollEnabled = saved.enabled
             saved.view?.bounces = saved.bounces
@@ -727,7 +782,10 @@ final class KaraokeOverlayPresenter {
 /// Canvas background can fill the layer while touches outside the lyrics reach native controls.
 private final class KaraokeCanvasContainer: UIView {
     var activeRect = CGRect.zero
-    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool { activeRect.contains(point) }
+    weak var sidebar: UIView?
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        activeRect.contains(point) || sidebar?.frame.contains(point) == true
+    }
 }
 
 /// Observe native sliders/buttons without delaying, cancelling, or recognizing their touches.
