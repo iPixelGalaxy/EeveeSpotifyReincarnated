@@ -25,7 +25,9 @@ final class KaraokeBackgroundRenderer: NSObject, MTKViewDelegate {
     private var loadingImage: UIImage?
     private var loadingToken = UUID()
     private static let textureQueue = DispatchQueue(label: "com.eevee.karaoke.texture", qos: .userInitiated)
-    private var transitionStart: CFTimeInterval = 0
+    private var transitionElapsed: CFTimeInterval = 0
+    private var lastFrameStamp: CFTimeInterval?
+    private var loggedTransitionMidpoint = false
     private let transitionDuration: CFTimeInterval = 1.6
     private static let imageContext = CIContext()
     private let startTime = CACurrentMediaTime()
@@ -68,7 +70,7 @@ final class KaraokeBackgroundRenderer: NSObject, MTKViewDelegate {
             return
         }
         guard let original = image.cgImage, loadingImage !== image, pendingImage !== image else { return }
-        if albumTexture != nil, CACurrentMediaTime() - transitionStart < transitionDuration {
+        if previousTexture != nil, transitionElapsed < transitionDuration {
             pendingImage = image
             return
         }
@@ -105,14 +107,26 @@ final class KaraokeBackgroundRenderer: NSObject, MTKViewDelegate {
         previousTexture = albumTexture
         albumTexture = texture
         sourceImage = image
-        transitionStart = previousTexture == nil ? CACurrentMediaTime() - transitionDuration : CACurrentMediaTime()
-        writeDebugLog("[Karaoke][background] animated artwork blend started duration=\(transitionDuration)")
+        transitionElapsed = previousTexture == nil ? transitionDuration : 0
+        lastFrameStamp = nil
+        loggedTransitionMidpoint = false
+        writeDebugLog("[Karaoke][background] artwork ready; fade from previous=\(previousTexture != nil) duration=\(transitionDuration)")
     }
 
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
 
+    private func isVisible(_ view: MTKView) -> Bool {
+        guard let window = view.window, view.convert(view.bounds, to: window).intersects(window.bounds) else { return false }
+        var ancestor: UIView? = view
+        while let current = ancestor {
+            if current.isHidden || current.alpha <= 0.01 { return false }
+            ancestor = current.superview
+        }
+        return true
+    }
+
     func draw(in view: MTKView) {
-        guard let albumTexture = albumTexture,
+        guard isVisible(view), let albumTexture = albumTexture,
               let drawable = view.currentDrawable,
               let descriptor = view.currentRenderPassDescriptor,
               let commandBuffer = commandQueue.makeCommandBuffer(),
@@ -120,7 +134,17 @@ final class KaraokeBackgroundRenderer: NSObject, MTKViewDelegate {
             return
         }
 
-        let blend = Float(min(1, max(0, (CACurrentMediaTime() - transitionStart) / transitionDuration)))
+        let now = CACurrentMediaTime()
+        if previousTexture != nil {
+            // Start on the first drawable frame. A hidden or stalled view must not consume the fade.
+            if let lastFrameStamp { transitionElapsed += min(1.0 / 15.0, max(0, now - lastFrameStamp)) }
+            lastFrameStamp = now
+        }
+        let blend = Float(min(1, max(0, transitionElapsed / transitionDuration)))
+        if previousTexture != nil, blend >= 0.5, !loggedTransitionMidpoint {
+            loggedTransitionMidpoint = true
+            writeDebugLog("[Karaoke][background] rendering artwork fade midpoint")
+        }
         var params = KaraokeBgParamsMirror(
             time: Float((CACurrentMediaTime() - startTime) * 0.1),
             warpIntensity: warpIntensity,
@@ -138,7 +162,9 @@ final class KaraokeBackgroundRenderer: NSObject, MTKViewDelegate {
         commandBuffer.present(drawable)
         commandBuffer.commit()
         if blend >= 1 {
+            if previousTexture != nil { writeDebugLog("[Karaoke][background] artwork fade complete") }
             previousTexture = nil
+            lastFrameStamp = nil
             if let pending = pendingImage {
                 pendingImage = nil
                 setAlbumArt(pending)

@@ -79,14 +79,11 @@ struct KaraokeBackgroundView: View {
                 DispatchQueue.main.asyncAfter(deadline: .now() + (attempt < 10 ? 0.3 : 1), execute: work)
             }
         }
-        let playing = KaraokePlaybackTracker.shared.playerReportedTrackId() ?? KaraokePlaybackTracker.shared.currentTrackId()
-        guard playing == trackId else {
-            if attempt == 0 || attempt == 10 {
-                writeDebugLog("[Karaoke][background] waiting for matching playback metadata")
-            }
-            return
-        }
-        if let image = AlbumArtLocator.currentAlbumArt(forTrackId: trackId),
+        // A refresh closure can outlive the SwiftUI value that captured its track ID.
+        // Follow the live player on every poll rather than waiting on that captured value.
+        let tracker = KaraokePlaybackTracker.shared
+        guard let playing = tracker.playerReportedTrackId() ?? tracker.currentTrackId() else { return }
+        if let image = AlbumArtLocator.currentAlbumArt(forTrackId: playing),
            let signature = Self.signature(image), signature != fingerprint {
             Self.lastImage = image
             Self.lastFingerprint = signature
@@ -95,7 +92,7 @@ struct KaraokeBackgroundView: View {
                 fingerprint = signature
                 albumArtImage = image
             }
-            writeDebugLog("[Karaoke][background] updated artwork for track=\(trackId ?? "nil") attempt=\(attempt)")
+            writeDebugLog("[Karaoke][background] updated artwork for live track=\(playing) attempt=\(attempt)")
             // Keep a slow refresh after startup: delayed artwork can replace an earlier cached image.
             if !Self.metalRendererSupported {
                 DispatchQueue.global(qos: .userInitiated).async {

@@ -84,24 +84,24 @@ enum PlayerDeclutter {
             queue.append(contentsOf: view.subviews)
         }
         for collection in cardCollections.allObjects {
-            // Reload only cards hidden by the override; preserve the main player and its artwork.
-            let collapsed = collection.visibleCells.compactMap { cell -> (UICollectionViewCell, IndexPath)? in
-                guard !enabled, objc_getAssociatedObject(cell, &interactionKey) != nil,
-                      let index = collection.indexPath(for: cell) else { return nil }
-                return (cell, index)
+            // Spotify owns the data source; restore sizing without issuing item updates.
+            for cell in collection.visibleCells {
+                resetCard(cell)
+                cell.contentView.invalidateIntrinsicContentSize()
+                cell.setNeedsLayout()
             }
-            for cell in collection.visibleCells { resetCard(cell) }
-            collection.collectionViewLayout.invalidateLayout()
-            collection.setNeedsLayout()
-            if !collapsed.isEmpty {
-                DispatchQueue.main.async { [weak collection] in
-                    guard !lyricsOverride, let collection else { return }
-                    let indices = collapsed.compactMap { cell, index -> IndexPath? in
-                        collection.cellForItem(at: index) === cell ? index : nil
-                    }
-                    if !indices.isEmpty { UIView.performWithoutAnimation { collection.reloadItems(at: indices) } }
+            let layout = collection.collectionViewLayout
+            if let flow = layout as? UICollectionViewFlowLayout {
+                let context = flow.invalidationContext(forBoundsChange: collection.bounds)
+                if let context = context as? UICollectionViewFlowLayoutInvalidationContext {
+                    context.invalidateFlowLayoutAttributes = true
+                    context.invalidateFlowLayoutDelegateMetrics = true
                 }
+                flow.invalidateLayout(with: context)
+            } else {
+                layout.invalidateLayout()
             }
+            collection.setNeedsLayout()
         }
         root?.setNeedsLayout()
         PlayerAssistantVisibility.refresh()
