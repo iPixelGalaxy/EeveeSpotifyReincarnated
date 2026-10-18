@@ -12,15 +12,17 @@ enum KaraokeTextAlignment: String, Codable, CaseIterable {
 }
 
 struct KaraokeOptions: Codable, Hashable {
+    static let textScaleBaseline: Double = 0.95
+    private var textScaleVersion = 1
     var textAlignment: KaraokeTextAlignment = .automatic
     var reversedDirection = false
     var enabled = true
     var blurIntensity: Double = 1.5
-    var textScale: Double = 0.95
+    var textScale: Double = 1
     var timingOffsetMs: Double = 0
     var allowScreenRecording = true
 
-    init(textAlignment: KaraokeTextAlignment = .automatic, reversedDirection: Bool = false, enabled: Bool = true, blurIntensity: Double = 1.5, textScale: Double = 0.95) {
+    init(textAlignment: KaraokeTextAlignment = .automatic, reversedDirection: Bool = false, enabled: Bool = true, blurIntensity: Double = 1.5, textScale: Double = 1) {
         self.textAlignment = textAlignment
         self.reversedDirection = reversedDirection
         self.enabled = enabled
@@ -29,7 +31,7 @@ struct KaraokeOptions: Codable, Hashable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case textAlignment, reversedDirection, enabled, blurIntensity, timingOffsetMs, allowScreenRecording, textScale
+        case textAlignment, reversedDirection, enabled, blurIntensity, timingOffsetMs, allowScreenRecording, textScale, textScaleVersion
     }
 
     // Settings saved before these fields existed must keep decoding.
@@ -39,7 +41,13 @@ struct KaraokeOptions: Codable, Hashable {
         reversedDirection = try container.decodeIfPresent(Bool.self, forKey: .reversedDirection) ?? false
         enabled = try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
         blurIntensity = try container.decodeIfPresent(Double.self, forKey: .blurIntensity) ?? 1.5
-        textScale = min(1.3, max(0.7, try container.decodeIfPresent(Double.self, forKey: .textScale) ?? 0.95))
+        let savedScale = try container.decodeIfPresent(Double.self, forKey: .textScale)
+        let scaleVersion = try container.decodeIfPresent(Int.self, forKey: .textScaleVersion) ?? 0
+        // Preserve the old size when rebasing the displayed percentage to 100%.
+        let normalizedScale = scaleVersion == 0
+            ? (savedScale ?? Self.textScaleBaseline) / Self.textScaleBaseline
+            : savedScale ?? 1
+        textScale = min(1.3, max(0.7, normalizedScale))
         timingOffsetMs = try container.decodeIfPresent(Double.self, forKey: .timingOffsetMs) ?? 0
         allowScreenRecording = try container.decodeIfPresent(Bool.self, forKey: .allowScreenRecording) ?? true
     }
