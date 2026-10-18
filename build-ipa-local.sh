@@ -15,6 +15,8 @@
 #      Include OpenSpotifySafariExtension, matching the patched workflow.
 #
 # Requires: theos, cyan (pyzule-rw), ipapatch, dpkg, ldid, plutil.
+# EEVEE_MINIMAL_IPA=1 omits optional extensions for single-App-ID signing.
+# EEVEE_IPA_OUTPUT overrides the final output path.
 
 set -euo pipefail
 
@@ -32,9 +34,13 @@ cd "$REPO_DIR"
 VERSION=$(grep -E '^Version:' control | awk '{print $2}')
 SPOT_VERSION=$(unzip -p "$VANILLA_IPA" 'Payload/Spotify.app/Info.plist' \
     | plutil -extract CFBundleShortVersionString raw - 2>/dev/null || echo "unknown")
-OUT_DIR="Outputs/IPAS"
+PUBLISH_IPA="${EEVEE_IPA_OUTPUT:-$REPO_DIR/Outputs/IPAS/EeveeSpotify-${VERSION}-${SPOT_VERSION}.ipa}"
+[[ "$PUBLISH_IPA" == /* ]] || PUBLISH_IPA="$REPO_DIR/$PUBLISH_IPA"
+OUT_DIR=$(mktemp -d)
 OUT_IPA="$OUT_DIR/EeveeSpotify-${VERSION}-${SPOT_VERSION}.ipa"
-mkdir -p "$OUT_DIR"
+EXT_DIR=""
+PUBLISH_TEMP=""
+trap 'rm -rf "$OUT_DIR"; if [ -n "$EXT_DIR" ]; then rm -rf "$EXT_DIR"; fi; if [ -n "$PUBLISH_TEMP" ]; then rm -f "$PUBLISH_TEMP"; fi' EXIT
 
 color() { printf '\033[1;32m==> %s\033[0m\n' "$*"; }
 
@@ -70,17 +76,22 @@ cyan -i "$VANILLA_IPA" -o "$OUT_IPA" -f "${INJECT[@]}" -c 9 -m 15.0 -du
 color "6/7  ipapatch LC-inject zxPluginsInject"
 ipapatch --input "$OUT_IPA" --inplace --noconfirm --dylib packages/zxPluginsInject.dylib
 
-# Match the patched workflow's Safari extension and Watch cleanup.
-EXT_DIR=$(mktemp -d)
-trap 'rm -rf "$EXT_DIR"' EXIT
-git clone --depth 1 https://github.com/BillyCurtis/OpenSpotifySafariExtension.git "$EXT_DIR"
-EXT_SRC="$EXT_DIR/OpenSpotifySafariExtension.appex"
-[ -d "$EXT_SRC" ] || { echo "OpenSpotifySafariExtension.appex not found" >&2; exit 1; }
+# Match the patched workflow unless a single-App-ID package was requested.
+if [ "${EEVEE_MINIMAL_IPA:-0}" != 1 ]; then
+    EXT_DIR=$(mktemp -d)
+    git clone --depth 1 https://github.com/BillyCurtis/OpenSpotifySafariExtension.git "$EXT_DIR"
+    EXT_SRC="$EXT_DIR/OpenSpotifySafariExtension.appex"
+    [ -d "$EXT_SRC" ] || { echo "OpenSpotifySafariExtension.appex not found" >&2; exit 1; }
+fi
 cd "$OUT_DIR"
 rm -rf Payload
 unzip -q "$(basename "$OUT_IPA")"
-mkdir -p Payload/Spotify.app/PlugIns
-cp -R "$EXT_SRC" Payload/Spotify.app/PlugIns/
+if [ "${EEVEE_MINIMAL_IPA:-0}" = 1 ]; then
+    rm -rf Payload/Spotify.app/PlugIns Payload/Spotify.app/AppClips
+else
+    mkdir -p Payload/Spotify.app/PlugIns
+    cp -R "$EXT_SRC" Payload/Spotify.app/PlugIns/
+fi
 rm -rf Payload/Spotify.app/Watch Payload/Spotify.app/com.apple.WatchPlaceholder
 rm -f "$(basename "$OUT_IPA")"
 zip -qry "$(basename "$OUT_IPA")" Payload
@@ -96,6 +107,12 @@ color "7/7  stage alternate app icons"
 chmod +x Tools/alt-icons.sh
 Tools/alt-icons.sh "$OUT_IPA"
 
+# Publish atomically after every packaging step; installers must not consume intermediates.
+mkdir -p "$(dirname "$PUBLISH_IPA")"
+PUBLISH_TEMP="$(dirname "$PUBLISH_IPA")/.eevee-publish-$$.ipa.partial"
+cp "$OUT_IPA" "$PUBLISH_TEMP"
+mv -f "$PUBLISH_TEMP" "$PUBLISH_IPA"
+PUBLISH_TEMP=""
 color "Done"
-ls -lh "$OUT_IPA"
+echo "$PUBLISH_IPA"
 echo "Sign with Sideloadly / AltStore / TrollStore."
