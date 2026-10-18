@@ -26,6 +26,8 @@ final class KaraokeOverlayPresenter {
     private static var focused = false
     private static var suspended = false
     private static var nativeTouchActive = false
+    private static var compactTouch = false
+    private static var focusHeartbeat: DispatchSourceTimer?
     private static var nativeMonitor: KaraokeControlTouchMonitor?
     private static weak var playerRoot: UIView?
     private static var loggedRoot: ObjectIdentifier?
@@ -50,14 +52,17 @@ final class KaraokeOverlayPresenter {
         guard isPresented else { return false }
         if let touched = touch.view, let container, touched.isDescendant(of: container) { return false }
         nativeTouchActive = true
+        compactTouch = focused && touch.view.map { touched in controls.map { touched.isDescendant(of: $0) } ?? false } == true
         idleWork?.cancel()
         writeDebugLog("[Karaoke][touch] native control began; pause idle timer")
         return true
     }
     static func nativeTouchEnded() {
         nativeTouchActive = false
-        writeDebugLog("[Karaoke][touch] native control ended; restart idle timer")
-        interact()
+        let keepCompact = compactTouch && focused
+        compactTouch = false
+        writeDebugLog("[Karaoke][touch] native control ended; compact=\(keepCompact)")
+        if !keepCompact { interact() }
     }
 
     static func registerControls(_ view: UIView) {
@@ -65,7 +70,11 @@ final class KaraokeOverlayPresenter {
         if replaced { setFocused(false) }
         controls = view
         if replaced { interact() }
-        if isPresented { view.alpha = focused ? 0 : 1; view.isUserInteractionEnabled = !focused }
+        if isPresented {
+            view.alpha = 1
+            view.isUserInteractionEnabled = true
+            if focused { layoutCompactControls() }
+        }
     }
     static func registerDuration(_ view: UIView) {
         let replaced = duration !== view && focused
@@ -144,6 +153,7 @@ final class KaraokeOverlayPresenter {
                     writeDebugLog("[Karaoke][hierarchy] \(name) id=\(view.accessibilityIdentifier ?? "-") frame=\(view.convert(view.bounds, to: root)) alpha=\(view.alpha)")
                 }
             }
+            PlayerDeclutter.hideLatePlayerElement(view)
             queue.append(contentsOf: view.subviews)
             if let scroll = view as? UIScrollView,
                scroll.bounds.height > root.bounds.height * 0.5,
@@ -153,13 +163,16 @@ final class KaraokeOverlayPresenter {
                 if outerScrolls[id] == nil { outerScrolls[id] = ScrollState(view: scroll, enabled: scroll.isScrollEnabled, bounces: scroll.bounces) }
                 scroll.isScrollEnabled = false
                 scroll.bounces = false
-                if abs(scroll.contentOffset.y) > 1 { scroll.setContentOffset(.zero, animated: false) }
+                let top = -scroll.adjustedContentInset.top
+                if abs(scroll.contentOffset.y - top) > 1 { scroll.setContentOffset(CGPoint(x: scroll.contentOffset.x, y: top), animated: false) }
             }
         }
         for view in [controls, footer].compactMap({ $0 }) {
-            view.alpha = focused ? 0 : 1
-            view.isUserInteractionEnabled = !focused
+            let hidden = focused && view === footer
+            view.alpha = hidden ? 0 : 1
+            view.isUserInteractionEnabled = !hidden
         }
+        if focused { layoutCompactControls() }
         updateFrame()
     }
 
@@ -177,8 +190,46 @@ final class KaraokeOverlayPresenter {
         DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: work)
     }
 
+    private static func layoutCompactControls() {
+        guard focused, let controls, let canvas, let window = canvas.window,
+              let saved = nativeStates[ObjectIdentifier(controls)] else { return }
+        controls.alpha = 1
+        controls.isUserInteractionEnabled = true
+        let scale: CGFloat = 0.60
+        let center = CGPoint(x: window.bounds.midX, y: window.safeAreaLayoutGuide.layoutFrame.maxY - 32)
+        if let frame = unitFrame(controls, in: window),
+           abs(frame.midX - center.x) < 1, abs(frame.midY - center.y) < 1,
+           abs(controls.transform.a - saved.transform.a * scale) < 0.001,
+           abs(controls.transform.d - saved.transform.d * scale) < 0.001 { return }
+        controls.transform = saved.transform.scaledBy(x: scale, y: scale)
+        guard let frame = unitFrame(controls, in: window) else { return }
+        let delta = CGPoint(x: center.x - frame.midX, y: center.y - frame.midY)
+        let moved = controls.superview?.convert(delta, from: window) ?? delta
+        let zero = controls.superview?.convert(CGPoint.zero, from: window) ?? .zero
+        var transform = controls.transform
+        transform.tx += moved.x - zero.x
+        transform.ty += moved.y - zero.y
+        controls.transform = transform
+        controls.alpha = 1
+        controls.isUserInteractionEnabled = true
+    }
+
+    private static func startFocusHeartbeat() {
+        let timer = DispatchSource.makeTimerSource(queue: .main)
+        timer.schedule(deadline: .now() + 0.4, repeating: 0.4)
+        timer.setEventHandler {
+            guard focused, isPresented, UIApplication.shared.applicationState == .active else { return }
+            if let controller = playerRoot?.next as? UIViewController { layoutPlayer(controller) }
+            else { layoutCompactControls(); refreshFocusGeometry() }
+        }
+        focusHeartbeat = timer
+        timer.resume()
+    }
+
     private static func setFocused(_ value: Bool) {
         guard focused != value else { return }
+        focusHeartbeat?.cancel()
+        focusHeartbeat = nil
         focused = value
         writeDebugLog("[Karaoke][focus] focused=\(value) positionMs=\(KaraokePlaybackTracker.shared.currentPositionMs()) info=\(String(describing: information?.frame)) controls=\(String(describing: controls?.frame))")
         if value, let canvas, let window = canvas.window, let information,
@@ -187,7 +238,7 @@ final class KaraokeOverlayPresenter {
                 nativeStates[ObjectIdentifier(view)] = NativeState(view)
             }
             let end = duration.flatMap { unitFrame($0, in: window)?.maxY } ?? infoFrame.maxY
-            focusShift = max(0, window.safeAreaLayoutGuide.layoutFrame.maxY - 8 - end)
+            focusShift = max(0, window.safeAreaLayoutGuide.layoutFrame.maxY - 66 - end)
             UIView.animate(withDuration: 0.3, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction]) {
                 for view in [information, duration].compactMap({ $0 }) {
                     if let saved = nativeStates[ObjectIdentifier(view)] {
@@ -199,9 +250,12 @@ final class KaraokeOverlayPresenter {
                         view.transform = transform
                     }
                 }
-                for view in [controls, footer].compactMap({ $0 }) { view.alpha = 0; view.isUserInteractionEnabled = false }
+                footer?.alpha = 0
+                footer?.isUserInteractionEnabled = false
+                layoutCompactControls()
                 updateFrame()
             }
+            startFocusHeartbeat()
         } else {
             if value { focused = false }
             let saved = Array(nativeStates.values)
@@ -288,7 +342,7 @@ final class KaraokeOverlayPresenter {
         let endView = duration ?? information
         guard let endFrame = unitFrame(endView, in: window),
               let savedEnd = nativeStates[ObjectIdentifier(endView)] else { return }
-        let target = window.safeAreaLayoutGuide.layoutFrame.maxY - 8
+        let target = window.safeAreaLayoutGuide.layoutFrame.maxY - 66
         guard abs(endFrame.maxY - target) > 1 else { return }
         // Spotify can change its own Canvas layout while focused; measure its new baseline.
         let translation = CGPoint(x: endView.transform.tx - savedEnd.transform.tx,
@@ -474,6 +528,7 @@ private final class KaraokeControlTouchMonitor: UIGestureRecognizer {
     override func canPrevent(_ preventedGestureRecognizer: UIGestureRecognizer) -> Bool { false }
     override func canBePrevented(by preventingGestureRecognizer: UIGestureRecognizer) -> Bool { false }
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
+        guard !trackingNative else { return }
         guard let touch = touches.first, KaraokeOverlayPresenter.nativeTouchBegan(touch) else { state = .failed; return }
         trackingNative = true
     }
@@ -487,5 +542,9 @@ private final class KaraokeControlTouchMonitor: UIGestureRecognizer {
         trackingNative = false
         state = .failed
     }
-    override func reset() { super.reset(); trackingNative = false }
+    override func reset() {
+        if trackingNative { KaraokeOverlayPresenter.nativeTouchEnded() }
+        trackingNative = false
+        super.reset()
+    }
 }

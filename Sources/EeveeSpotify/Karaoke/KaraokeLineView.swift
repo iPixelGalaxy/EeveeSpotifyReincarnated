@@ -52,7 +52,7 @@ struct KaraokeLineView: View {
         }
         .frame(width: availableWidth)
         .opacity(isActiveLine ? 1 : (distance < 0 ? 0.46 : 0.56))
-        .blur(radius: isActiveLine ? 0 : min(4, CGFloat(abs(distance)) * CGFloat(blurIntensity) * 0.4))
+        .blur(radius: isActiveLine ? 0 : min(1, CGFloat(abs(distance)) * CGFloat(blurIntensity) * 0.1))
         .animation(.easeOut(duration: 0.2), value: isActiveLine)
     }
 }

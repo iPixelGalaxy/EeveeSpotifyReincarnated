@@ -1,48 +1,17 @@
 import SwiftUI
 import MetalKit
 
-/// Animated backdrop behind the karaoke lyrics. Prefers the real
-/// Metal-based domain-warp renderer (KaraokeMetalBackgroundView, the
-/// native analog of the real extension's Kawarp WebGL warp/blur) when the
-/// album art image itself is available and Metal is supported on-device.
-/// Falls back to a simpler animated gradient using extracted dominant
-/// colors (AlbumArtColorExtractor) — or fixed placeholder colors if even
-/// that fails, e.g. if Spotify hasn't published artwork to
-/// MPNowPlayingInfoCenter yet and the UIView-walking fallback also comes
-/// up empty, or if Metal itself is unavailable (e.g. simulator).
+/// Refresh artwork after player changes: media metadata and cover views can arrive later than lyrics.
 @available(iOS 15.0, *)
 struct KaraokeBackgroundView: View {
+    let trackId: String?
     @State private var albumArtImage: UIImage?
-    @State private var colors: [Color] = KaraokeBackgroundView.placeholderColors
+    @State private var colors = Self.placeholderColors
+    @State private var fingerprint: Data?
+    @State private var generation = UUID()
+    @State private var refreshWork: DispatchWorkItem?
 
-    private static let placeholderColors: [Color] = [
-        Color(red: 0.07, green: 0.35, blue: 0.45),
-        Color(red: 0.10, green: 0.55, blue: 0.40),
-        Color(red: 0.05, green: 0.20, blue: 0.55),
-    ]
-
-    /// Whether the Metal background renderer actually works on this build —
-    /// computed once and cached (Swift `static let` initializes lazily on
-    /// first access). This used to be approximated as just
-    /// `MTLCreateSystemDefaultDevice() != nil` (i.e. "is Metal supported on
-    /// this device at all"), which is true on essentially any real iPhone
-    /// — it said nothing about whether KaraokeBackgroundRenderer's shader
-    /// library actually loaded. That matters here because the renderer
-    /// loads its .metallib from a fixed path that a Makefile step has to
-    /// produce at build time (see the UNTESTED note in
-    /// KaraokeBackgroundRenderer's init) — if that step didn't run or
-    /// staged the file somewhere else, `KaraokeBackgroundRenderer(device:)`
-    /// returns nil, but the previous code had *already* committed to
-    /// showing KaraokeMetalBackgroundView's MTKView by that point. An
-    /// MTKView with a device but no delegate still runs its normal render
-    /// loop and presents its default clear color every frame — solid
-    /// black — instead of falling back to anything. This is what was
-    /// actually producing the black background, and why it only appeared
-    /// once album art started being found at all: before that, albumArtImage
-    /// was always nil and this branch was never reached, so the gradient
-    /// fallback (which doesn't depend on the .metallib loading) was always
-    /// shown instead. Testing renderer construction up front, before
-    /// deciding which view to show, fixes that.
+    private static let placeholderColors: [Color] = [Color(white: 0.08), Color(white: 0.04), Color(white: 0.02)]
     private static let metalRendererSupported: Bool = {
         guard let device = MTLCreateSystemDefaultDevice() else { return false }
         return KaraokeBackgroundRenderer(device: device) != nil
@@ -50,72 +19,73 @@ struct KaraokeBackgroundView: View {
 
     var body: some View {
         Group {
-            if let albumArtImage = albumArtImage,
-               albumArtImage.size.width > 1, albumArtImage.size.height > 1,
-               KaraokeBackgroundView.metalRendererSupported {
-                KaraokeMetalBackgroundView(albumArt: albumArtImage)
-                    .ignoresSafeArea()
+            if let image = albumArtImage, Self.metalRendererSupported {
+                KaraokeMetalBackgroundView(albumArt: image).ignoresSafeArea()
             } else {
-                gradientFallback
+                TimelineView(.periodic(from: .now, by: 1.0 / 12.0)) { timeline in
+                    let time = timeline.date.timeIntervalSinceReferenceDate
+                    RadialGradient(colors: colors,
+                        center: UnitPoint(x: 0.5 + 0.3 * sin(time * 0.13), y: 0.5 + 0.3 * cos(time * 0.09)),
+                        startRadius: 20, endRadius: 500)
+                        .ignoresSafeArea().background(Color.black)
+                }
             }
         }
-        .onAppear { loadAlbumArt() }
+        .onAppear { restart() }
+        .onChange(of: trackId) { _ in restart() }
+        .onDisappear { refreshWork?.cancel(); refreshWork = nil; generation = UUID() }
     }
 
-    @available(iOS 15.0, *)
-    private var gradientFallback: some View {
-        TimelineView(.periodic(from: .now, by: 1.0 / 12.0)) { timeline in
-            let t = timeline.date.timeIntervalSinceReferenceDate
-            RadialGradient(
-                colors: colors,
-                center: animatedCenter(t: t),
-                startRadius: 20,
-                endRadius: 500
-            )
-            .ignoresSafeArea()
-            .background(Color.black)
-            .animation(.linear(duration: 1.0 / 12.0), value: t)
-        }
+    private func restart() {
+        refreshWork?.cancel()
+        generation = UUID()
+        albumArtImage = nil
+        fingerprint = nil
+        colors = Self.placeholderColors
+        writeDebugLog("[Karaoke][background] reset for track=\(trackId ?? "nil")")
+        refresh(token: generation, attempt: 0)
     }
 
-    /// AlbumArtLocator now checks MPNowPlayingInfoCenter's published artwork
-    /// first (reliable, no view-hierarchy timing concerns) and only falls
-    /// back to walking the Now Playing UIView tree if that's unavailable.
-    /// Reading NowPlayingInfo must happen on the main thread, which
-    /// AlbumArtLocator itself already handles — this call stays on
-    /// .onAppear's (main-thread) caller for that reason. If found, we both
-    /// keep the raw image (for the Metal path) and kick off color
-    /// extraction in the background (for the gradient fallback path, in
-    /// case Metal setup fails downstream even though the image itself was
-    /// found).
-    private func loadAlbumArt() {
-        guard let image = AlbumArtLocator.currentAlbumArt() else {
-            writeDebugLog("[Karaoke] no album art view found — using placeholder gradient")
+    private func refresh(token: UUID, attempt: Int) {
+        guard token == generation else { return }
+        let playing = KaraokePlaybackTracker.shared.playerReportedTrackId() ?? KaraokePlaybackTracker.shared.currentTrackId()
+        guard playing == trackId else {
+            refreshWork = nil
+            albumArtImage = nil
+            fingerprint = nil
+            colors = Self.placeholderColors
             return
         }
-        albumArtImage = image
-        extractColors(from: image)
-    }
-
-    private func extractColors(from image: UIImage) {
-        DispatchQueue.global(qos: .userInitiated).async {
-            let extracted = AlbumArtColorExtractor.dominantColors(from: image, count: 3)
-            guard extracted.count >= 2 else {
-                writeDebugLog("[Karaoke] album art color extraction returned too few colors (\(extracted.count)) — using placeholder gradient")
-                return
-            }
-            let swiftUIColors = extracted.map { Color($0) }
-            DispatchQueue.main.async {
-                colors = swiftUIColors
+        if let image = AlbumArtLocator.currentAlbumArt(forTrackId: trackId),
+           let signature = Self.signature(image), signature != fingerprint {
+            fingerprint = signature
+            albumArtImage = image
+            writeDebugLog("[Karaoke][background] updated artwork for track=\(trackId ?? "nil") attempt=\(attempt)")
+            // Keep a slow refresh after startup: delayed artwork can replace an earlier cached image.
+            if !Self.metalRendererSupported {
+                DispatchQueue.global(qos: .userInitiated).async {
+                    let extracted = AlbumArtColorExtractor.dominantColors(from: image, count: 3)
+                    DispatchQueue.main.async {
+                        guard token == generation, fingerprint == signature, extracted.count >= 2 else { return }
+                        colors = extracted.map { Color($0) }
+                    }
+                }
             }
         }
+        let work = DispatchWorkItem { refresh(token: token, attempt: attempt + 1) }
+        refreshWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + (attempt < 10 ? 0.3 : 2), execute: work)
     }
 
-    private func animatedCenter(t: TimeInterval) -> UnitPoint {
-        // Slow Lissajous-style drift so the gradient feels alive without
-        // being distracting behind moving text.
-        let x = 0.5 + 0.3 * sin(t * 0.13)
-        let y = 0.5 + 0.3 * cos(t * 0.09)
-        return UnitPoint(x: x, y: y)
+    private static func signature(_ image: UIImage) -> Data? {
+        guard let cgImage = image.cgImage else { return nil }
+        var bytes = [UInt8](repeating: 0, count: 8 * 8 * 4)
+        let rendered = bytes.withUnsafeMutableBytes { buffer -> Bool in
+            guard let context = CGContext(data: buffer.baseAddress, width: 8, height: 8, bitsPerComponent: 8,
+                bytesPerRow: 32, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
+            context.draw(cgImage, in: CGRect(x: 0, y: 0, width: 8, height: 8))
+            return true
+        }
+        return rendered ? Data(bytes) : nil
     }
 }

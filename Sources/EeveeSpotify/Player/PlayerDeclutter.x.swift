@@ -186,6 +186,15 @@ enum PlayerDeclutter {
         objc_setAssociatedObject(cell, &portraitKey, nil, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
     }
 
+    static func hideLatePlayerElement(_ view: UIView) {
+        guard hidden.contains(.allCards) || hidden.contains(.talkAboutSong) || hidden.contains(.aboutSong) else { return }
+        var name = NSStringFromClass(type(of: view))
+        if let controller = view.next as? UIViewController { name += NSStringFromClass(type(of: controller)) }
+        if ["Martini_NPVCardProviderImpl", "Martini_ElementImpl", "Martini_FloatingChatImpl", "AboutTheSong"].contains(where: name.contains) {
+            hideSongPrompt(view)
+        }
+    }
+
     static func hideSongPrompt(_ view: UIView) {
         guard hidden.contains(.talkAboutSong) || hidden.contains(.allCards),
               view.window != nil, view.bounds.width > 1 else { return }
@@ -230,6 +239,12 @@ enum PlayerDeclutter {
         return true
     }
 
+    private static var scrollOffsetKey: UInt8 = 0
+    static func constrainedOffset(_ proposed: CGPoint, in scroll: UIScrollView) -> CGPoint {
+        guard let y = objc_getAssociatedObject(scroll, &scrollOffsetKey) as? NSNumber else { return proposed }
+        return CGPoint(x: proposed.x, y: CGFloat(y.doubleValue))
+    }
+
     /// Once collapsed cards leave no vertical overflow, prevent elastic/stale empty space.
     static func trimEmptyTail(in root: UIView) {
         guard hidden.contains(.allCards) || [.talkAboutSong, .aboutSong, .artistCircles].allSatisfy(hidden.contains) else { return }
@@ -252,19 +267,20 @@ enum PlayerDeclutter {
                 scroll.alwaysBounceVertical = false
                 if collapsed { scroll.isScrollEnabled = false }
                 let lower = -scroll.adjustedContentInset.top
+                if collapsed { objc_setAssociatedObject(scroll, &scrollOffsetKey, NSNumber(value: Double(lower)), .OBJC_ASSOCIATION_RETAIN_NONATOMIC) }
                 let upper = collapsed ? lower : max(lower, scroll.contentSize.height - scroll.bounds.height + scroll.adjustedContentInset.bottom)
                 let y = min(upper, max(lower, scroll.contentOffset.y))
                 if abs(y - scroll.contentOffset.y) > 0.5 {
                     scroll.setContentOffset(CGPoint(x: scroll.contentOffset.x, y: y), animated: false)
                 }
             } else if let saved = objc_getAssociatedObject(scroll, &bounceKey) as? [Bool], saved.count == 3 {
+                objc_setAssociatedObject(scroll, &scrollOffsetKey, nil, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
                 scroll.bounces = saved[0]
                 scroll.alwaysBounceVertical = saved[1]
                 scroll.isScrollEnabled = saved[2]
                 objc_setAssociatedObject(scroll, &bounceKey, nil, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
             }
-            // Only the outer player scroll view; never change nested Canvas/carousel scrolling.
-            return
+            // Continue through native wrappers; the karaoke container and horizontal carousels are excluded.
         }
     }
 
@@ -555,5 +571,29 @@ class PlayerEmptyTailHook: ClassHook<UIViewController> {
     func viewDidLayoutSubviews() {
         orig.viewDidLayoutSubviews()
         if let root = target.viewIfLoaded { PlayerDeclutter.trimEmptyTail(in: root) }
+    }
+}
+
+// Spotify also moves its wrapper scroll views programmatically after laying out collapsed cards.
+// Restrict only instances marked by trimEmptyTail; all other scrolling keeps its normal offset.
+class PlayerCollapsedScrollHook: ClassHook<UIScrollView> {
+    typealias Group = PlayerCardsDeclutterGroup
+    @objc(setContentOffset:)
+    func setContentOffset(_ offset: CGPoint) {
+        orig.setContentOffset(PlayerDeclutter.constrainedOffset(offset, in: target))
+    }
+    @objc(setContentOffset:animated:)
+    func setContentOffset(_ offset: CGPoint, animated: Bool) {
+        orig.setContentOffset(PlayerDeclutter.constrainedOffset(offset, in: target), animated: animated)
+    }
+}
+
+// Floating song panels can arrive after the player's collection cells have already collapsed.
+class PlayerLateFloatingPanelHook: ClassHook<UIViewController> {
+    typealias Group = PlayerCardsDeclutterGroup
+    func viewDidLayoutSubviews() {
+        orig.viewDidLayoutSubviews()
+        guard let view = target.viewIfLoaded, PlayerPlacement.contains(view) else { return }
+        PlayerDeclutter.hideLatePlayerElement(view)
     }
 }

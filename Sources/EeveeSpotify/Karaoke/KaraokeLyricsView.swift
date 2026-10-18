@@ -22,7 +22,7 @@ struct KaraokeLyricsView: View {
         GeometryReader { geo in
             let frame = viewport.frame.isEmpty ? CGRect(origin: .zero, size: geo.size) : viewport.frame
             ZStack(alignment: .topLeading) {
-                KaraokeBackgroundView()
+                KaraokeBackgroundView(trackId: model.trackId)
                     .id(model.trackId)
                 LinearGradient(
                     colors: [.black.opacity(0.40), .black.opacity(0.32), .black.opacity(0.55)],
@@ -126,7 +126,24 @@ private struct KaraokeScrollingLines: View {
 
     private var horizontalPadding: CGFloat { max(20, size.width * 0.05) }
     private var fontSize: CGFloat { 1.3 * min(36, max(28, size.width * 0.075)) }
-    private var focus: UnitPoint { UnitPoint(x: 0.5, y: options.reversedDirection ? 0.75 : 0.25) }
+    @StateObject private var anchorLayout = KaraokeTextPlanCache()
+    private var focus: UnitPoint {
+        let lineHeight = UIFont.systemFont(ofSize: fontSize, weight: .bold).lineHeight + fontSize * 0.23
+        var itemHeight = lineHeight
+        if let index = activeLineIndex, layouts.indices.contains(index) {
+            let layout = layouts[index]
+            if !layout.isInterlude {
+                let alignment = options.textAlignment == .automatic
+                    ? (layout.isOppositeAligned ? HorizontalAlignment.trailing : .leading) : options.textAlignment.horizontalAlignment
+                itemHeight = anchorLayout.plan(words: layout.words, width: max(1, size.width - horizontalPadding * 2),
+                    fontSize: fontSize, alignment: alignment, rtl: layout.isRTL).height
+            }
+        }
+        // scrollTo aligns the same fraction of the item and viewport; account for both heights.
+        let shift = lineHeight / max(lineHeight, size.height - itemHeight)
+        let y = options.reversedDirection ? 0.75 - shift : 0.25 + shift
+        return UnitPoint(x: 0.5, y: min(0.95, max(0.05, y)))
+    }
 
     var body: some View {
         let alignment = options.textAlignment.horizontalAlignment
@@ -137,7 +154,9 @@ private struct KaraokeScrollingLines: View {
                 LazyVStack(alignment: alignment, spacing: fontSize * 0.4) {
                     Color.clear.frame(height: size.height * 0.25)
 
-                    ForEach(Array(layouts.enumerated()), id: \.offset) { index, layout in
+                    ForEach(Array(layouts.enumerated()).filter { entry in
+                        !entry.element.isInterlude || (currentMs >= entry.element.startMs && currentMs < entry.element.endMs)
+                    }, id: \.offset) { index, layout in
                         KaraokeLineView(
                             layout: layout,
                             currentMs: currentMs,

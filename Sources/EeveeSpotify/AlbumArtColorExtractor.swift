@@ -123,8 +123,8 @@ struct AlbumArtColorExtractor {
 /// "biggest UIImageView" guessing involved. We try that first and only
 /// fall back to the UIView walk if it's unavailable.
 struct AlbumArtLocator {
-    static func currentAlbumArt() -> UIImage? {
-        if let artwork = artworkFromNowPlayingInfo() {
+    static func currentAlbumArt(forTrackId trackId: String? = nil) -> UIImage? {
+        if let artwork = artworkFromNowPlayingInfo(forTrackId: trackId) {
             return artwork
         }
         return artworkFromViewHierarchy()
@@ -132,7 +132,7 @@ struct AlbumArtLocator {
 
     /// Must be read on the main thread, matching the existing
     /// MPNowPlayingInfoCenter read pattern in CustomLyrics.x.swift.
-    private static func artworkFromNowPlayingInfo() -> UIImage? {
+    private static func artworkFromNowPlayingInfo(forTrackId trackId: String?) -> UIImage? {
         var artwork: MPMediaItemArtwork?
         if Thread.isMainThread {
             artwork = MPNowPlayingInfoCenter.default().nowPlayingInfo?[MPMediaItemPropertyArtwork] as? MPMediaItemArtwork
@@ -141,6 +141,8 @@ struct AlbumArtLocator {
                 artwork = MPNowPlayingInfoCenter.default().nowPlayingInfo?[MPMediaItemPropertyArtwork] as? MPMediaItemArtwork
             }
         }
+        if let trackId, let identifier = MPNowPlayingInfoCenter.default().nowPlayingInfo?[MPNowPlayingInfoPropertyExternalContentIdentifier] as? String,
+           identifier.contains("spotify"), !identifier.contains(trackId) { return nil }
         guard let artwork = artwork else { return nil }
 
         // artwork.bounds is just metadata the *publisher* (Spotify) chose
@@ -172,7 +174,12 @@ struct AlbumArtLocator {
         var best: (view: UIImageView, area: CGFloat)?
 
         func walk(_ view: UIView) {
-            if let imageView = view as? UIImageView, imageView.image != nil {
+            guard !view.isHidden, view.alpha > 0.01 else { return }
+            if NSStringFromClass(type(of: view)).contains("KaraokeCanvasContainer") { return }
+            if let imageView = view as? UIImageView, imageView.image != nil,
+               let window = imageView.window,
+               imageView.convert(imageView.bounds, to: window).intersection(window.bounds).width >= imageView.bounds.width * 0.6,
+               imageView.convert(imageView.bounds, to: window).intersection(window.bounds).height >= imageView.bounds.height * 0.6 {
                 let area = imageView.bounds.width * imageView.bounds.height
                 if area > (best?.area ?? 0) {
                     best = (imageView, area)
