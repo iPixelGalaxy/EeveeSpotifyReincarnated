@@ -46,9 +46,18 @@ enum KaraokeFooterButton {
 
     private static weak var row: UIStackView?
 
-    static func attach(to root: UIView) {
+    static func attach(to root: UIView, isDJ: Bool = false) {
         _ = observer
         KaraokeOverlayPresenter.registerPlayer(root)
+        if isDJ {
+            row = nil
+            if button.superview !== root { button.removeFromSuperview(); root.addSubview(button) }
+            button.translatesAutoresizingMaskIntoConstraints = true
+            button.frame = CGRect(x: root.bounds.midX - 20, y: max(root.bounds.minY, root.bounds.maxY - 48), width: 40, height: 44)
+            update()
+            return
+        }
+        button.translatesAutoresizingMaskIntoConstraints = false
         if row?.isDescendant(of: root) != true {
             row = root.eeveeFirst(UIStackView.self, where: { $0.arrangedSubviews.count >= 2 })
         }
@@ -108,6 +117,7 @@ func activateKaraokeFooterButton() {
         return
     }
     KaraokeFooterGroup().activate()
+    activateKaraokeDJHooks()
     eeveeLog("[EeveeSpotify][Karaoke] Footer button active (%.2f ms)", (CFAbsoluteTimeGetCurrent() - start) * 1000)
 }
 

@@ -14,14 +14,30 @@ final class KaraokeLandscapeSidebar: UIScrollView {
         let translates: Bool
         let frame: CGRect
         let height: CGFloat
+        let controller: UIViewController?
+        weak var controllerParent: UIViewController?
+        let transfersController: Bool
 
-        init?(source: UIView, heightLimit: CGFloat) {
+        init?(source: UIView, heightLimit: CGFloat, host: UIViewController) {
             let content: UIView
             if source.bounds.height > heightLimit * 0.6,
                let stack = source.eeveeFirst(UIStackView.self, where: { !$0.isHidden && $0.bounds.height > 8 && $0.bounds.height < heightLimit * 0.6 }) {
                 content = stack
             } else { content = source }
             guard content.bounds.width > 1, content.bounds.height > 8, let parent = content.superview else { return nil }
+            let owner = content.next as? UIViewController
+            let rootOwner = owner?.viewIfLoaded === content ? owner : nil
+            if let rootOwner {
+                guard rootOwner.parent != nil else { return nil }
+                var ancestor: UIViewController? = host
+                while let current = ancestor {
+                    guard current !== rootOwner else { return nil }
+                    ancestor = current.parent
+                }
+            }
+            controller = rootOwner
+            controllerParent = rootOwner?.parent
+            transfersController = rootOwner != nil && rootOwner?.parent !== host
             self.source = source; view = content; self.parent = parent
             arranged = (parent as? UIStackView)?.arrangedSubviews.contains(content) == true
             index = arranged ? ((parent as? UIStackView)?.arrangedSubviews.firstIndex(of: content) ?? 0) : (parent.subviews.firstIndex(of: content) ?? 0)
@@ -36,28 +52,45 @@ final class KaraokeLandscapeSidebar: UIScrollView {
                 ancestor = current.superview
             }
             constraints = saved
+            if transfersController { rootOwner?.willMove(toParent: nil) }
             NSLayoutConstraint.deactivate(saved)
             content.removeFromSuperview()
+            if transfersController, let rootOwner {
+                rootOwner.removeFromParent()
+                host.addChild(rootOwner)
+            }
             content.translatesAutoresizingMaskIntoConstraints = true
         }
 
         func restore() {
+            if transfersController { controller?.willMove(toParent: nil) }
             view.removeFromSuperview()
-            guard let parent else { return }
+            if transfersController {
+                controller?.removeFromParent()
+                if let controller, let controllerParent { controllerParent.addChild(controller) }
+            }
+            guard let parent, !transfersController || controllerParent != nil else { return }
             view.translatesAutoresizingMaskIntoConstraints = translates
             if arranged, let stack = parent as? UIStackView { stack.insertArrangedSubview(view, at: min(index, stack.arrangedSubviews.count)) }
             else { parent.insertSubview(view, at: min(index, parent.subviews.count)) }
             view.frame = frame
             NSLayoutConstraint.activate(constraints)
+            if transfersController, let controllerParent { controller?.didMove(toParent: controllerParent) }
             parent.setNeedsLayout()
         }
     }
 
     private var placements: [Unit: Placement] = [:]
+    private weak var host: UIViewController?
+    private var pending: [Unit: UIView] = [:]
+    private var attachScheduled = false
+    private var applying = false
+    private var restored = false
     private let artwork = UIImageView()
     private var refresh: Timer?
 
-    override init(frame: CGRect) {
+    init(frame: CGRect, host: UIViewController) {
+        self.host = host
         super.init(frame: frame)
         showsVerticalScrollIndicator = false
         delaysContentTouches = false
@@ -79,11 +112,32 @@ final class KaraokeLandscapeSidebar: UIScrollView {
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     func attach(_ root: UIView?, as unit: Unit) {
-        guard let root, window != nil, root.window === window, placements[unit]?.source !== root else { return }
-        placements.removeValue(forKey: unit)?.restore()
-        guard let placement = Placement(source: root, heightLimit: max(200, bounds.height)) else { return }
-        placements[unit] = placement
-        addSubview(placement.view)
+        guard !restored, !applying, let root, window != nil, root.window === window,
+              placements[unit]?.source !== root else { return }
+        pending[unit] = root
+        guard !attachScheduled else { return }
+        attachScheduled = true
+        // Reparent only after Spotify's viewDidLayoutSubviews/rotation stack unwinds.
+        DispatchQueue.main.async { [weak self] in self?.applyPendingUnits() }
+    }
+
+    private func applyPendingUnits() {
+        attachScheduled = false
+        guard !restored, let host, window != nil else { pending.removeAll(); return }
+        let roots = pending
+        pending.removeAll()
+        applying = true
+        defer { applying = false }
+        for unit in Unit.allCases {
+            guard let root = roots[unit], root.window === window,
+                  placements[unit]?.source !== root else { continue }
+            placements.removeValue(forKey: unit)?.restore()
+            guard let placement = Placement(source: root, heightLimit: max(200, bounds.height), host: host) else { continue }
+            placements[unit] = placement
+            addSubview(placement.view)
+            if placement.transfersController { placement.controller?.didMove(toParent: host) }
+            writeDebugLog("[Karaoke][landscape] attached \(unit) controllerTransferred=\(placement.transfersController)")
+        }
         setNeedsLayout()
     }
 
@@ -103,6 +157,8 @@ final class KaraokeLandscapeSidebar: UIScrollView {
     }
 
     func restore() {
+        restored = true
+        pending.removeAll()
         refresh?.invalidate(); refresh = nil
         for unit in Unit.allCases.reversed() { placements.removeValue(forKey: unit)?.restore() }
         removeFromSuperview()

@@ -231,6 +231,41 @@ final class KaraokeOverlayPresenter {
         if isPresented { layoutPlayer(controller); interact() }
     }
 
+    private static func djPlayerRoot(_ controller: UIViewController) -> UIViewController {
+        var result = controller
+        var ancestor = controller.parent
+        while let current = ancestor {
+            let name = NSStringFromClass(type(of: current))
+            if name.contains("NowPlaying") || name.contains("DJM") { result = current }
+            ancestor = current.parent
+        }
+        return result
+    }
+
+    static func prepareDJPlayer(_ controller: UIViewController) {
+        preparingAppearance = true
+        suspended = false
+        retryCount = 0
+        let root = djPlayerRoot(controller)
+        playerRoot = root.viewIfLoaded
+        if isEnabled && UserDefaults.karaokeOptions.enabled && UserDefaults.lyricsSource.supportsCustomLyricsView {
+            PlayerDeclutter.setLyricsOverride(true, in: playerRoot)
+        }
+        if let view = controller.viewIfLoaded { registerCanvas(view) }
+        recoverNativeUnits(in: root)
+        writeDebugLog("[Karaoke][DJ] preparing trackKnown=\(KaraokePlaybackTracker.shared.playerReportedTrackId() != nil)")
+    }
+
+    static func resumeDJPlayer(_ controller: UIViewController) {
+        if let view = controller.viewIfLoaded { registerCanvas(view) }
+        resumePlayer(djPlayerRoot(controller))
+    }
+
+    static func suspendDJPlayer(_ controller: UIViewController) {
+        guard canvas === controller.viewIfLoaded else { return }
+        suspendPlayer()
+    }
+
     static func suspendPlayer() {
         suspended = true
         preparingAppearance = false
@@ -283,8 +318,8 @@ final class KaraokeOverlayPresenter {
             guard let view = child.viewIfLoaded, view.isDescendant(of: root) else { continue }
             let name = NSStringFromClass(type(of: child))
             if name.contains("PlaybackControlsElementsUnit") { registerControls(view) }
-            else if name.contains("DurationElementUnit") { registerDuration(view) }
-            else if name.contains("InformationElementsUnit") { registerInformation(view) }
+            else if name.contains("DurationElementUnit") || name.contains("DJMDurationElementsUnit") { registerDuration(view) }
+            else if name.contains("InformationElementsUnit") || name.contains("DJMInformationUnit") { registerInformation(view) }
         }
     }
 
@@ -538,7 +573,10 @@ final class KaraokeOverlayPresenter {
         guard let sidebar = landscapeSidebar else { return }
         landscapeSidebar = nil
         container?.sidebar = nil
+        let wasUpdating = updatingFrame
+        updatingFrame = true
         sidebar.restore()
+        updatingFrame = wasUpdating
         footer?.alpha = 1; footer?.isUserInteractionEnabled = true
     }
 
@@ -594,8 +632,8 @@ final class KaraokeOverlayPresenter {
             return
         }
         container.isHidden = false
-        if let wide = landscapeFrames(in: canvas) {
-            let sidebar = landscapeSidebar ?? KaraokeLandscapeSidebar(frame: wide.sidebar)
+        if let wide = landscapeFrames(in: canvas), let host = hosting.parent {
+            let sidebar = landscapeSidebar ?? KaraokeLandscapeSidebar(frame: wide.sidebar, host: host)
             if landscapeSidebar == nil { landscapeSidebar = sidebar; container.addSubview(sidebar); container.sidebar = sidebar }
             if sidebar.frame != wide.sidebar { sidebar.frame = wide.sidebar }
             sidebar.attach(information, as: .information)
