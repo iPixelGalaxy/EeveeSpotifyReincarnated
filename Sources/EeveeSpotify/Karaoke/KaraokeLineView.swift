@@ -50,78 +50,80 @@ private struct KaraokeWordView: View {
     let isActiveLine: Bool
     let isRTL: Bool
     let fontSize: CGFloat
+    @State private var motion = KaraokeWordMotion()
 
-    private var wordStartMs: Int { syllables.first?.startMs ?? 0 }
-    private var wordEndMs: Int { syllables.last?.endMs ?? wordStartMs }
-
-    private var wordProgress: Double {
-        guard isActiveLine, wordEndMs > wordStartMs else {
-            return currentMs >= wordEndMs ? 1 : 0
-        }
-        let raw = Double(currentMs - wordStartMs) / Double(wordEndMs - wordStartMs)
-        return min(1, max(0, raw))
-    }
-
-    private var scale: Double { KaraokeAnimationCurve.wordScale.value(at: wordProgress) }
-    private var glow: Double { KaraokeAnimationCurve.glow.value(at: wordProgress) }
-    private var yOffsetFraction: Double { KaraokeAnimationCurve.yOffset.value(at: wordProgress) }
+    private var startMs: Int { syllables.first?.startMs ?? 0 }
+    private var endMs: Int { syllables.last?.endMs ?? startMs }
+    private var letters: [Character] { Array(syllables.map(\.text).joined()) }
+    // Match the plugin's default held-word threshold. Preserve joining scripts as shaped text.
+    private var emphasizesLetters: Bool { !isRTL && endMs - startMs >= 1000 && letters.count > 1 }
 
     var body: some View {
         HStack(spacing: 0) {
-            ForEach(Array(syllables.enumerated()), id: \.offset) { _, syllable in
-                KaraokeSyllableTextView(
-                    syllable: syllable,
-                    currentMs: currentMs,
-                    isActiveLine: isActiveLine,
-                    isRTL: isRTL,
-                    fontSize: fontSize
-                )
+            if emphasizesLetters {
+                ForEach(Array(letters.enumerated()), id: \.offset) { index, letter in
+                    let sample = index < motion.letters.count ? motion.letters[index] : KaraokeMotionSample()
+                    let duration = Double(max(1, endMs - startMs)) / Double(letters.count)
+                    KaraokeLyricText(
+                        text: String(letter),
+                        progress: (Double(currentMs - startMs) - Double(index) * duration) / duration,
+                        active: isActiveLine, isRTL: isRTL, fontSize: fontSize
+                    )
+                    .scaleEffect(sample.scale)
+                    .offset(y: CGFloat(sample.offset * 2) * fontSize)
+                    .shadow(color: .white.opacity(min(1, max(0, sample.glow * 1.85))), radius: CGFloat(4 + 12 * max(0, sample.glow)))
+                }
+            } else {
+                ForEach(Array(syllables.enumerated()), id: \.offset) { _, syllable in
+                    KaraokeLyricText(
+                        text: syllable.text,
+                        progress: syllable.endMs > syllable.startMs
+                            ? Double(currentMs - syllable.startMs) / Double(syllable.endMs - syllable.startMs)
+                            : (currentMs >= syllable.startMs ? 1 : 0),
+                        active: isActiveLine, isRTL: isRTL, fontSize: fontSize
+                    )
+                }
             }
         }
-        .scaleEffect(scale)
-        // Keep word motion proportional to the responsive lyric size.
-        .offset(y: CGFloat(yOffsetFraction) * fontSize)
-        .shadow(color: .white.opacity(glow * 0.8), radius: CGFloat(glow * 8))
-        .animation(.linear(duration: 1.0 / 30.0), value: wordProgress)
+        .scaleEffect(motion.word.scale)
+        .offset(y: CGFloat(motion.word.offset) * fontSize)
+        .shadow(color: .white.opacity(min(1, max(0, motion.word.glow))), radius: CGFloat(3 + 6 * max(0, motion.word.glow)))
+        .onAppear { updateMotion() }
+        .onChange(of: currentMs) { _ in updateMotion() }
+        .onChange(of: isActiveLine) { _ in updateMotion() }
+    }
+
+    private func updateMotion() {
+        motion.update(currentMs: currentMs, startMs: startMs, endMs: endMs,
+                      letterCount: emphasizesLetters ? letters.count : 0,
+                      active: isActiveLine, stamp: ProcessInfo.processInfo.systemUptime)
     }
 }
 
 @available(iOS 15.0, *)
-private struct KaraokeSyllableTextView: View {
-    let syllable: KaraokeSyllableDto
-    let currentMs: Int
-    let isActiveLine: Bool
+private struct KaraokeLyricText: View {
+    let text: String
+    let progress: Double
+    let active: Bool
     let isRTL: Bool
     let fontSize: CGFloat
 
-    // LinearGradient never mirrors .leading/.trailing for RTL, so pick the physical edges here.
-    private var gradientStart: UnitPoint { isRTL ? .trailing : .leading }
-    private var gradientEnd: UnitPoint { isRTL ? .leading : .trailing }
-
-    private var progress: Double {
-        guard isActiveLine, syllable.endMs > syllable.startMs else {
-            return currentMs >= syllable.endMs ? 1 : 0
-        }
-        let raw = Double(currentMs - syllable.startMs) / Double(syllable.endMs - syllable.startMs)
-        return min(1, max(0, raw))
-    }
-
     var body: some View {
-        Text(syllable.text)
+        let progress = min(1, max(0, progress))
+        // Plugin's sine-out wipe travels from -20% to 100%, with a soft transition band.
+        let edge = -0.2 + 1.2 * sin(progress * .pi / 2)
+        let left = min(1, max(0, edge - 0.1))
+        let right = min(1, max(0, edge + 0.1))
+        let bright = Color.white.opacity(active ? 0.85 : 1)
+        let dim = Color.white.opacity(active ? 0.5 : 1)
+        Text(text)
             .font(.system(size: fontSize, weight: .bold))
             .fixedSize(horizontal: false, vertical: true)
-            .foregroundStyle(
-                LinearGradient(
-                    stops: [
-                        .init(color: .white, location: 0),
-                        .init(color: .white, location: progress),
-                        .init(color: .white.opacity(isActiveLine ? 0.45 : 1), location: progress),
-                        .init(color: .white.opacity(isActiveLine ? 0.45 : 1), location: 1),
-                    ],
-                    startPoint: gradientStart,
-                    endPoint: gradientEnd
-                )
-            )
-            .animation(.linear(duration: 0.08), value: progress)
+            .foregroundStyle(LinearGradient(stops: [
+                .init(color: edge <= 0 ? dim : bright, location: 0),
+                .init(color: edge <= 0 ? dim : bright, location: left),
+                .init(color: edge >= 1 ? bright : dim, location: right),
+                .init(color: edge >= 1 ? bright : dim, location: 1)
+            ], startPoint: isRTL ? .trailing : .leading, endPoint: isRTL ? .leading : .trailing))
     }
 }

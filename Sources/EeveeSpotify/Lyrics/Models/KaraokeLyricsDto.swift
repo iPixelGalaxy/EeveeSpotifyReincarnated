@@ -104,4 +104,6 @@ struct KaraokeLyricsDto {
     var uploaderUrl: String? = nil
     var makerName: String? = nil
     var makerUrl: String? = nil
+    var uploaderAvatarUrl: String? = nil
+    var makerAvatarUrl: String? = nil
 }

@@ -24,7 +24,7 @@ enum KaraokeFooterButton {
 
     private static let button: UIButton = {
         var config = UIButton.Configuration.plain()
-        config.image = UIImage(systemName: "mic.fill", withConfiguration: UIImage.SymbolConfiguration(pointSize: 20, weight: .regular))
+        config.image = SpicyLyricsBrand.image()
         config.baseForegroundColor = UIColor(white: 1, alpha: 0.85)
         config.contentInsets = .zero
         let button = UIButton(configuration: config)
@@ -81,4 +81,20 @@ func activateKaraokeFooterButton() {
     }
     KaraokeFooterGroup().activate()
     eeveeLog("[EeveeSpotify][Karaoke] Footer button active (%.2f ms)", (CFAbsoluteTimeGetCurrent() - start) * 1000)
+}
+
+class KaraokeCoverHostHook: ClassHook<UIView> {
+    typealias Group = KaraokeFooterGroup
+    static let targetName = KaraokeOverlayPresenter.coverClass
+
+    func layoutSubviews() {
+        orig.layoutSubviews()
+        KaraokeOverlayPresenter.layout(in: target)
+    }
+
+    func didMoveToWindow() {
+        orig.didMoveToWindow()
+        KaraokeOverlayPresenter.layout(in: target)
+        KaraokeOverlayPresenter.detached(target)
+    }
 }

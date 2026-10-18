@@ -1,5 +1,6 @@
 import SwiftUI
 import MetalKit
+import CoreImage
 import EeveeSpotifyC
 
 /// Renders the album-art domain-warp background using the Metal shader in
@@ -14,6 +15,8 @@ final class KaraokeBackgroundRenderer: NSObject, MTKViewDelegate {
     private let commandQueue: MTLCommandQueue
     private let pipelineState: MTLRenderPipelineState
     private var albumTexture: MTLTexture?
+    private weak var sourceImage: UIImage?
+    private static let imageContext = CIContext()
     private let startTime = CACurrentMediaTime()
 
     var warpIntensity: Float = 0.8
@@ -49,7 +52,13 @@ final class KaraokeBackgroundRenderer: NSObject, MTKViewDelegate {
     }
 
     func setAlbumArt(_ image: UIImage) {
-        guard let cgImage = image.cgImage else { return }
+        guard sourceImage !== image, let original = image.cgImage else { return }
+        sourceImage = image
+        let input = CIImage(cgImage: original)
+        let blurred = input.clampedToExtent().applyingFilter("CIGaussianBlur", parameters: [
+            kCIInputRadiusKey: Double(original.width) * 0.08
+        ]).cropped(to: input.extent)
+        let cgImage = Self.imageContext.createCGImage(blurred, from: input.extent) ?? original
         let loader = MTKTextureLoader(device: device)
         albumTexture = try? loader.newTexture(cgImage: cgImage, options: [
             .SRGB: false,

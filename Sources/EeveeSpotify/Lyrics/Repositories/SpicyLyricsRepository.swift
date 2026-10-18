@@ -17,6 +17,22 @@ class SpicyLyricsRepository: LyricsRepository {
 
     private static let apiUrl = "https://api.spicylyrics.org/v1/lyrics/"
 
+    private static func profileName(_ profile: SpicyLyricsJSON?) -> String? {
+        for key in ["username", "displayName", "display_name", "globalName", "global_name"] {
+            if let value = profile?[key]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty {
+                return value
+            }
+        }
+        return nil
+    }
+
+    private static func profileURL(_ profile: SpicyLyricsJSON?) -> String? {
+        if let url = profile?["url"]?.stringValue, URL(string: url)?.scheme == "https" { return url }
+        guard let id = profile?["id"]?.stringValue,
+              let encoded = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) else { return nil }
+        return "https://spicylyrics.org/uid/\(encoded)"
+    }
+
     // MARK: - Network
 
     // 503 means the lyrics are still being generated.
@@ -169,7 +185,7 @@ class SpicyLyricsRepository: LyricsRepository {
 
         if !karaokeLines.isEmpty {
             let songWriters = root["SongWriters"]?.arrayValue?.compactMap { $0.stringValue } ?? []
-            let attribution = root["UploadAttribution"]
+            let attribution = root["TTMLUploadMetadata"] ?? root["UploadAttribution"]
 
             let filledKaraokeLines = LyricsUncensorFill.fillKaraoke(
                 lines: karaokeLines,
@@ -185,10 +201,13 @@ class SpicyLyricsRepository: LyricsRepository {
                     lines: normalizedKaraokeLines,
                     songWriters: songWriters,
                     providerCode: root["source"]?.stringValue,
-                    uploaderName: attribution?["Uploader"]?["username"]?.stringValue,
-                    uploaderUrl: attribution?["Uploader"]?["url"]?.stringValue,
-                    makerName: attribution?["Maker"]?["username"]?.stringValue,
-                    makerUrl: attribution?["Maker"]?["url"]?.stringValue
+                    providerName: Self.providerName,
+                    uploaderName: Self.profileName(attribution?["Uploader"]),
+                    uploaderUrl: Self.profileURL(attribution?["Uploader"]),
+                    makerName: Self.profileName(attribution?["Maker"]),
+                    makerUrl: Self.profileURL(attribution?["Maker"]),
+                    uploaderAvatarUrl: attribution?["Uploader"]?["avatar"]?.stringValue,
+                    makerAvatarUrl: attribution?["Maker"]?["avatar"]?.stringValue
                 )
             )
         }
@@ -258,7 +277,7 @@ class SpicyLyricsRepository: LyricsRepository {
             : (lines.map(\.content).canBeRomanized ? .canBeRomanized : .original)
 
         if !karaokeLines.isEmpty {
-            let attribution = root["UploadAttribution"]
+            let attribution = root["TTMLUploadMetadata"] ?? root["UploadAttribution"]
             let filledKaraokeLines = LyricsUncensorFill.fillKaraoke(
                 lines: karaokeLines,
                 query: query,
@@ -272,10 +291,13 @@ class SpicyLyricsRepository: LyricsRepository {
                     lines: SpicyLyricsRepository.normalizeMonotonicTiming(filledKaraokeLines),
                     songWriters: root["SongWriters"]?.arrayValue?.compactMap { $0.stringValue } ?? [],
                     providerCode: root["source"]?.stringValue,
-                    uploaderName: attribution?["Uploader"]?["username"]?.stringValue,
-                    uploaderUrl: attribution?["Uploader"]?["url"]?.stringValue,
-                    makerName: attribution?["Maker"]?["username"]?.stringValue,
-                    makerUrl: attribution?["Maker"]?["url"]?.stringValue
+                    providerName: Self.providerName,
+                    uploaderName: Self.profileName(attribution?["Uploader"]),
+                    uploaderUrl: Self.profileURL(attribution?["Uploader"]),
+                    makerName: Self.profileName(attribution?["Maker"]),
+                    makerUrl: Self.profileURL(attribution?["Maker"]),
+                    uploaderAvatarUrl: attribution?["Uploader"]?["avatar"]?.stringValue,
+                    makerAvatarUrl: attribution?["Maker"]?["avatar"]?.stringValue
                 )
             )
         }
@@ -342,7 +364,7 @@ class SpicyLyricsRepository: LyricsRepository {
         guard let code = root["source"]?.stringValue, !code.isEmpty else { return nil }
         var parts = [providerName]
         if code == "spicy_lyrics" {
-            let attribution = root["UploadAttribution"]
+            let attribution = root["TTMLUploadMetadata"] ?? root["UploadAttribution"]
             if let maker = attribution?["Maker"]?["username"]?.stringValue, !maker.isEmpty {
                 parts.append("\("lyrics_made_by".localized) \(maker)")
             }

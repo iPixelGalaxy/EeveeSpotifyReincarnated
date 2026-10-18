@@ -1,67 +1,77 @@
 import UIKit
 import SwiftUI
 
-/// Presents the custom karaoke lyrics view as a full-screen modal, on top
-/// of whatever screen is currently shown — the "overlay" approach (Option D)
-/// rather than replacing Spotify's native LyricsViewControllerImplementation,
-/// since that would need a live-runtime hook point we weren't able to find
-/// safely (Spotify's anti-instrumentation protections crash on Frida attach
-/// before enumeration/hooking can happen).
+/// Hosts lyrics in the artwork rectangle. Spotify retains its own transport and footer controls.
 final class KaraokeOverlayPresenter {
     private(set) static var isPresented = false
+    private static weak var cover: UIView?
+    private static var hosting: UIViewController?
+    private static var previousAccessibilityHidden = false
+    static let coverClass = "_TtC35NowPlaying_ContentLayerPlatformImpl24AccessibleCollectionView"
+
+    static func layout(in candidate: UIView) {
+        guard candidate.window != nil, candidate.bounds.width > 100,
+              candidate.bounds.height > 100, PlayerPlacement.contains(candidate) else { return }
+        if !isPresented { cover = candidate; return }
+        guard candidate === cover, let parent = candidate.superview, let hosting else { return }
+        let frame = candidate.convert(candidate.bounds, to: parent)
+        if hosting.view.superview !== parent { parent.insertSubview(hosting.view, aboveSubview: candidate) }
+        if hosting.view.frame != frame { hosting.view.frame = frame }
+    }
+
+    static func detached(_ candidate: UIView) {
+        if candidate === cover, candidate.window == nil { dismiss() }
+    }
 
     static func present() {
-        guard !isPresented else { return }
-        guard UserDefaults.karaokeOptions.enabled, UserDefaults.lyricsSource.supportsCustomLyricsView else {
-            writeDebugLog("[Karaoke] present() skipped: custom lyrics view disabled in settings or unsupported by the lyrics source")
+        if isPresented { dismiss(); return }
+        guard #available(iOS 15.0, *), UserDefaults.karaokeOptions.enabled,
+              UserDefaults.lyricsSource.supportsCustomLyricsView else { return }
+        if cover?.window == nil {
+            let root = WindowHelper.shared.rootViewController.view
+            cover = root?.eeveeFirst(UIView.self, where: {
+                NSStringFromClass(type(of: $0)) == coverClass && $0.window != nil && PlayerPlacement.contains($0)
+            })
+        }
+        guard let cover, let parent = cover.superview else {
+            writeDebugLog("[Karaoke] artwork surface unavailable; open Now Playing first")
             return
         }
-        guard #available(iOS 15.0, *) else {
-            writeDebugLog("[Karaoke] present() skipped: requires iOS 15+")
-            return
-        }
-        guard let host = topVC() else {
-            writeDebugLog("[Karaoke] present() called but no top view controller found")
-            return
-        }
+        var responder: UIResponder? = parent
+        while responder != nil && !(responder is UIViewController) { responder = responder?.next }
+        guard let controller = responder as? UIViewController else { return }
         let tracker = KaraokePlaybackTracker.shared
         guard let trackId = tracker.playerReportedTrackId() ?? tracker.currentTrackId() else { return }
         let lyrics = KaraokeLyricsStore.shared.lyrics(forTrackId: trackId)
-
-        let view = KaraokeLyricsView(trackId: trackId, lyrics: lyrics, onDismiss: {
-            guard isPresented else { return }
-            isPresented = false
-            topVC()?.dismiss(animated: true)
-        })
-        let hosting = UIHostingController(rootView: view)
-        hosting.overrideUserInterfaceStyle = .dark
-        // Glass needs the player visible behind it; the animated backdrop is opaque.
-        let glass = KaraokeGlass.isEnabled
-        hosting.modalPresentationStyle = glass ? .overFullScreen : .fullScreen
-        hosting.view.backgroundColor = glass ? .clear : .black
-
+        let child = UIHostingController(rootView: KaraokeLyricsView(trackId: trackId, lyrics: lyrics, onDismiss: dismiss))
+        child.overrideUserInterfaceStyle = .dark
+        child.view.backgroundColor = .black
+        child.view.clipsToBounds = true
+        child.view.layer.cornerRadius = 12
+        controller.addChild(child)
+        parent.insertSubview(child.view, aboveSubview: cover)
+        child.view.frame = cover.convert(cover.bounds, to: parent)
+        child.didMove(toParent: controller)
+        previousAccessibilityHidden = cover.accessibilityElementsHidden
+        cover.accessibilityElementsHidden = true
+        hosting = child
         isPresented = true
-        host.present(hosting, animated: true)
     }
 
-    /// True if karaoke data exists for the current track — callers (e.g.
-    /// whatever decides whether to show a "Karaoke" button at all) should
-    /// check this rather than always presenting and risking a no-op.
+    static func dismiss() {
+        guard let hosting else { return }
+        hosting.willMove(toParent: nil)
+        hosting.view.removeFromSuperview()
+        hosting.removeFromParent()
+        cover?.accessibilityElementsHidden = previousAccessibilityHidden
+        self.hosting = nil
+        isPresented = false
+    }
+
     static func isAvailableForCurrentTrack() -> Bool {
         guard UserDefaults.karaokeOptions.enabled, UserDefaults.lyricsSource.supportsCustomLyricsView else { return false }
         let tracker = KaraokePlaybackTracker.shared
         guard let trackId = tracker.playerReportedTrackId() ?? tracker.currentTrackId() else { return false }
         return KaraokeLyricsStore.shared.lyrics(forTrackId: trackId) != nil
-    }
-
-    /// Walks from WindowHelper's captured-at-launch root view controller
-    /// (NOT a fresh `UIApplication.shared...windows` lookup) down to
-    /// whatever's actually topmost right now.
-    private static func topVC() -> UIViewController? {
-        var top = WindowHelper.shared.rootViewController
-        while let presented = top.presentedViewController {
-            top = presented
-        }
-        return top
     }
 }

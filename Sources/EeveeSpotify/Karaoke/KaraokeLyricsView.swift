@@ -14,12 +14,8 @@ struct KaraokeLyricsView: View {
     var body: some View {
         GeometryReader { geo in
             ZStack(alignment: .topTrailing) {
-                if KaraokeGlass.isEnabled {
-                    KaraokeGlassBackground().ignoresSafeArea()
-                } else {
-                    KaraokeBackgroundView()
-                        .id(model.trackId)
-                }
+                KaraokeBackgroundView()
+                    .id(model.trackId)
                 LinearGradient(
                     colors: [.black.opacity(0.40), .black.opacity(0.32), .black.opacity(0.55)],
                     startPoint: .top, endPoint: .bottom
@@ -56,7 +52,7 @@ struct KaraokeLyricsView: View {
     }
 
     private func content(lyrics: KaraokeLyricsDto, layouts: [KaraokeLineLayout], size: CGSize) -> some View {
-        TimelineView(.periodic(from: .now, by: 1.0 / 30.0)) { _ in
+        TimelineView(.periodic(from: .now, by: 1.0 / 60.0)) { _ in
             let currentMs = KaraokePlaybackTracker.shared.currentPositionMs()
 
             KaraokeScrollingLines(
@@ -90,15 +86,15 @@ struct KaraokeLyricsView: View {
 
     private var closeButton: some View {
         Button(action: onDismiss) {
-            Image(systemName: "chevron.down")
-                .font(.system(size: 18, weight: .semibold))
+            Image(systemName: "xmark")
+                .font(.system(size: 12, weight: .semibold))
                 .foregroundColor(.white.opacity(0.85))
-                .padding(14)
+                .padding(10)
                 .background(closeButtonBackground)
         }
         .accessibilityLabel(Text("Close lyrics"))
-        .padding(.top, 12)
-        .padding(.trailing, 20)
+        .padding(.top, 8)
+        .padding(.trailing, 8)
     }
 }
 
@@ -116,7 +112,7 @@ private struct KaraokeScrollingLines: View {
     @State private var resumeAt = Date.distantPast
 
     private var horizontalPadding: CGFloat { max(20, size.width * 0.05) }
-    private var fontSize: CGFloat { min(56, max(29.6, size.width * 0.07)) }
+    private var fontSize: CGFloat { min(56, max(29.6, size.width * 0.07)) * 1.75 }
     private var focus: UnitPoint { UnitPoint(x: 0.5, y: options.reversedDirection ? 0.75 : 0.25) }
 
     var body: some View {
@@ -125,7 +121,7 @@ private struct KaraokeScrollingLines: View {
 
         ScrollViewReader { proxy in
             ScrollView(showsIndicators: false) {
-                VStack(alignment: alignment, spacing: fontSize * 0.4) {
+                LazyVStack(alignment: alignment, spacing: fontSize * 0.4) {
                     Color.clear.frame(height: size.height * 0.25)
 
                     ForEach(Array(layouts.enumerated()), id: \.offset) { index, layout in
