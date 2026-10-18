@@ -34,8 +34,8 @@ final class KaraokeLyricsStore {
 
     private init() {}
 
-    func set(trackId: String, lyrics: KaraokeLyricsDto) {
-        guard !trackId.isEmpty else { return }
+    func set(trackId: String, source: LyricsSource, lyrics: KaraokeLyricsDto) {
+        guard !trackId.isEmpty, source == UserDefaults.lyricsSource else { return }
         lock.lock()
         cache[trackId] = lyrics
         order.removeAll { $0 == trackId }

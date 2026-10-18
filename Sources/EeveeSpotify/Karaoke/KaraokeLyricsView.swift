@@ -6,9 +6,9 @@ struct KaraokeLyricsView: View {
     @StateObject private var model: KaraokeLyricsViewModel
     private let options = UserDefaults.karaokeOptions
 
-    init(trackId: String?, lyrics: KaraokeLyricsDto, onDismiss: @escaping () -> Void) {
+    init(trackId: String?, lyrics: KaraokeLyricsDto?, onDismiss: @escaping () -> Void) {
         self.onDismiss = onDismiss
-        _model = StateObject(wrappedValue: KaraokeLyricsViewModel(trackId: trackId, lyrics: lyrics, onNoLyrics: onDismiss))
+        _model = StateObject(wrappedValue: KaraokeLyricsViewModel(trackId: trackId, lyrics: lyrics))
     }
 
     var body: some View {
@@ -30,6 +30,24 @@ struct KaraokeLyricsView: View {
                     content(lyrics: lyrics, layouts: model.layouts, size: geo.size)
                         // A new song starts from its own scroll position and state.
                         .id(model.trackId)
+                } else {
+                    VStack(spacing: 16) {
+                        if model.loadingFailed {
+                            Image(systemName: "mic.slash")
+                                .font(.system(size: 32))
+                            Text("karaoke_loading_failed".localized)
+                                .multilineTextAlignment(.center)
+                            Button("karaoke_retry".localized) { model.retry() }
+                                .buttonStyle(.bordered)
+                        } else {
+                            ProgressView()
+                                .tint(.white)
+                            Text("karaoke_loading".localized)
+                        }
+                    }
+                    .foregroundColor(.white)
+                    .padding(32)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
                 closeButton
             }

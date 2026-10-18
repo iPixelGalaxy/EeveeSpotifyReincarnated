@@ -1,29 +1,29 @@
 import SwiftUI
 
 /// Keeps the open custom lyrics view in step with the playing track. When a song ends and the
-/// next one starts, it swaps in that song's lyrics (fetching them if Spotify hasn't), and gives up
-/// — closing the view — only if none turn up.
+/// next one starts, it swaps in that song's lyrics. Slow or failed loads show a retry state.
 @available(iOS 15.0, *)
 final class KaraokeLyricsViewModel: ObservableObject {
     @Published private(set) var trackId: String?
     @Published private(set) var lyrics: KaraokeLyricsDto?
     @Published private(set) var layouts: [KaraokeLineLayout] = []
 
-    private let onNoLyrics: () -> Void
     private var observer: NSObjectProtocol?
     private var retryWork: DispatchWorkItem?
     private var attempts = 0
 
-    private let maxAttempts = 4
+    @Published private(set) var loadingFailed = false
+
+    private let maxAttempts = 45
     private let retryInterval: TimeInterval = 2.0
 
-    init(trackId: String?, lyrics: KaraokeLyricsDto, onNoLyrics: @escaping () -> Void) {
+    init(trackId: String?, lyrics: KaraokeLyricsDto?) {
         self.trackId = trackId
-        self.onNoLyrics = onNoLyrics
         apply(lyrics)
         observer = NotificationCenter.default.addObserver(
             forName: .eeveeKaraokeLyricsChanged, object: nil, queue: .main
         ) { [weak self] _ in self?.sync() }
+        sync()
     }
 
     deinit {
@@ -51,30 +51,48 @@ final class KaraokeLyricsViewModel: ObservableObject {
             retryWork?.cancel()
             retryWork = nil
             attempts = 0
+            loadingFailed = false
             trackId = playing
             apply(stored)
-        } else if lyrics == nil, let stored {
+        } else {
             apply(stored)
         }
 
         if lyrics == nil {
             fetchMissingLyrics()
         } else {
+            loadingFailed = false
             retryWork?.cancel()
             retryWork = nil
         }
     }
 
+    func retry() {
+        if let trackId {
+            LyricsFetchCache.shared.retry(trackId: trackId, source: UserDefaults.lyricsSource)
+        }
+        retryWork?.cancel()
+        retryWork = nil
+        attempts = 0
+        loadingFailed = false
+        sync()
+    }
+
     private func fetchMissingLyrics() {
         guard retryWork == nil, let trackId else { return }
         guard attempts < maxAttempts else {
-            writeDebugLog("[Karaoke] no lyrics for \(trackId) after \(attempts) attempts, closing custom lyrics view")
-            onNoLyrics()
+            writeDebugLog("[Karaoke] no lyrics for \(trackId) after \(attempts) checks")
+            loadingFailed = true
             return
         }
         attempts += 1
         writeDebugLog("[Karaoke] track changed to \(trackId) with the custom lyrics view open, fetching lyrics (attempt \(attempts))")
-        prefetchLyricsIfNeeded(trackId: trackId)
+        let fetch = lyricsFetch(trackId: trackId)
+        if fetch.result != nil {
+            // Completion without timed data is a real failure, not another slow request.
+            loadingFailed = true
+            return
+        }
 
         let work = DispatchWorkItem { [weak self] in
             self?.retryWork = nil

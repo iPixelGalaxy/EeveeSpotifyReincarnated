@@ -180,6 +180,7 @@ class SpicyLyricsRepository: LyricsRepository {
 
             KaraokeLyricsStore.shared.set(
                 trackId: trackId,
+                source: .spicylyrics,
                 lyrics: KaraokeLyricsDto(
                     lines: normalizedKaraokeLines,
                     songWriters: songWriters,
@@ -266,6 +267,7 @@ class SpicyLyricsRepository: LyricsRepository {
 
             KaraokeLyricsStore.shared.set(
                 trackId: trackId,
+                source: .spicylyrics,
                 lyrics: KaraokeLyricsDto(
                     lines: SpicyLyricsRepository.normalizeMonotonicTiming(filledKaraokeLines),
                     songWriters: root["SongWriters"]?.arrayValue?.compactMap { $0.stringValue } ?? [],

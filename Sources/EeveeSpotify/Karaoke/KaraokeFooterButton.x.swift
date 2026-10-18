@@ -23,24 +23,18 @@ enum KaraokeFooterButton {
     static let meter = PerfMeter("Karaoke][FooterButton")
 
     private static let button: UIButton = {
-        var config: UIButton.Configuration
-        if #available(iOS 26.0, *), KaraokeGlass.isEnabled {
-            config = .glass()
-        } else {
-            config = .plain()
-            config.background.backgroundColor = UIColor(white: 1, alpha: 0.15)
-        }
-        config.title = "karaoke_word_synced_button".localized
-        config.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer {
-            var attributes = $0
-            attributes.font = .systemFont(ofSize: 13, weight: .semibold)
-            return attributes
-        }
-        config.baseForegroundColor = .white
-        config.cornerStyle = .capsule
-        config.contentInsets = NSDirectionalEdgeInsets(top: 6, leading: 14, bottom: 6, trailing: 14)
+        var config = UIButton.Configuration.plain()
+        config.image = UIImage(systemName: "mic.fill", withConfiguration: UIImage.SymbolConfiguration(pointSize: 20, weight: .regular))
+        config.baseForegroundColor = UIColor(white: 1, alpha: 0.85)
+        config.contentInsets = .zero
         let button = UIButton(configuration: config)
+        button.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            button.widthAnchor.constraint(equalToConstant: 40),
+            button.heightAnchor.constraint(equalToConstant: 44)
+        ])
         button.overrideUserInterfaceStyle = .dark
+        button.accessibilityLabel = "karaoke_word_synced_button".localized
         button.addAction(UIAction { _ in KaraokeOverlayPresenter.present() }, for: .primaryActionTriggered)
         return button
     }()
@@ -57,17 +51,24 @@ enum KaraokeFooterButton {
             row = root.eeveeFirst(UIStackView.self, where: { $0.arrangedSubviews.count >= 2 })
         }
         guard let row else { return }
-        let rowFrame = row.convert(row.bounds, to: root)
-        if button.superview !== root { root.addSubview(button) }
-        else if root.subviews.last !== button { root.bringSubviewToFront(button) }
-        let size = button.intrinsicContentSize
-        let frame = CGRect(x: root.bounds.midX - size.width / 2, y: rowFrame.midY - size.height / 2, width: size.width, height: size.height)
-        if button.frame != frame { button.frame = frame }
+        // Join the native row immediately before its trailing share/queue controls.
+        // Arranged layout keeps Spotify responsible for spacing and avoids overlap.
+        if button.superview !== row {
+            button.removeFromSuperview()
+            row.insertArrangedSubview(button, at: max(0, row.arrangedSubviews.count - 2))
+        }
         update()
     }
 
     private static func update() {
-        button.isHidden = !KaraokeOverlayPresenter.isAvailableForCurrentTrack()
+        let tracker = KaraokePlaybackTracker.shared
+        let unavailable = !UserDefaults.karaokeOptions.enabled
+            || !UserDefaults.lyricsSource.supportsCustomLyricsView
+            || (tracker.playerReportedTrackId() ?? tracker.currentTrackId()) == nil
+        // Spotify owns this stack; avoid its hidden-arranged-view bookkeeping.
+        button.alpha = unavailable ? 0 : 1
+        button.isUserInteractionEnabled = !unavailable
+        button.accessibilityElementsHidden = unavailable
     }
 }
 

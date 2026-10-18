@@ -24,11 +24,9 @@ final class KaraokeOverlayPresenter {
             writeDebugLog("[Karaoke] present() called but no top view controller found")
             return
         }
-        guard let trackId = KaraokePlaybackTracker.shared.currentTrackId(),
-              let lyrics = KaraokeLyricsStore.shared.lyrics(forTrackId: trackId) else {
-            writeDebugLog("[Karaoke] present() called but no karaoke (Syllable) data available for current track")
-            return
-        }
+        let tracker = KaraokePlaybackTracker.shared
+        guard let trackId = tracker.playerReportedTrackId() ?? tracker.currentTrackId() else { return }
+        let lyrics = KaraokeLyricsStore.shared.lyrics(forTrackId: trackId)
 
         let view = KaraokeLyricsView(trackId: trackId, lyrics: lyrics, onDismiss: {
             guard isPresented else { return }
@@ -51,7 +49,8 @@ final class KaraokeOverlayPresenter {
     /// check this rather than always presenting and risking a no-op.
     static func isAvailableForCurrentTrack() -> Bool {
         guard UserDefaults.karaokeOptions.enabled, UserDefaults.lyricsSource.supportsCustomLyricsView else { return false }
-        guard let trackId = KaraokePlaybackTracker.shared.currentTrackId() else { return false }
+        let tracker = KaraokePlaybackTracker.shared
+        guard let trackId = tracker.playerReportedTrackId() ?? tracker.currentTrackId() else { return false }
         return KaraokeLyricsStore.shared.lyrics(forTrackId: trackId) != nil
     }
 

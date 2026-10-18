@@ -101,6 +101,9 @@ final class KaraokePlaybackTracker {
             // Button visibility follows the track, so tell it when the track changes.
             if self.lastTrackId != previousTrackId || self.observedTrackId != previousObservedTrackId {
                 KaraokeLyricsStore.shared.notify()
+                if let trackId = self.observedTrackId {
+                    DispatchQueue.main.async { prefetchLyricsIfNeeded(trackId: trackId) }
+                }
             }
         }
     }
@@ -108,7 +111,7 @@ final class KaraokePlaybackTracker {
     func updateTrackIdFromLyricsFetch(_ trackId: String) {
         guard !trackId.isEmpty else { return }
         queue.async {
-            guard self.lastTrackId != trackId else { return }
+            guard self.observedTrackId == nil, self.lastTrackId != trackId else { return }
             self.lastTrackId = trackId
             KaraokeLyricsStore.shared.notify()
         }
