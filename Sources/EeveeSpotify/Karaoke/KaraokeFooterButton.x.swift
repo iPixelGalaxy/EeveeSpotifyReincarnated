@@ -174,3 +174,34 @@ class KaraokeDurationUnitHook: ClassHook<UIViewController> {
         if let view = target.viewIfLoaded { KaraokeOverlayPresenter.registerDuration(view) }
     }
 }
+
+/// The stock lyrics header is a separate unit from the normal playback footer.
+class KaraokeStockLyricsHeaderHook: ClassHook<UIView> {
+    typealias Group = KaraokeFooterGroup
+    static let targetName = "_TtC22Lyrics_CardElementImpl14CardHeaderView"
+    func layoutSubviews() {
+        orig.layoutSubviews()
+        if KaraokeOverlayPresenter.isEnabled && PlayerPlacement.contains(target) {
+            target.alpha = 0
+            target.isUserInteractionEnabled = false
+            target.accessibilityElementsHidden = true
+        }
+    }
+}
+
+class KaraokePlayerLifecycleHook: ClassHook<UIViewController> {
+    typealias Group = KaraokeFooterGroup
+    static let targetName = "_TtC21NowPlaying_ScrollImpl23NPVScrollViewController"
+    func viewDidAppear(_ animated: Bool) {
+        orig.viewDidAppear(animated)
+        KaraokeOverlayPresenter.resumePlayer(target)
+    }
+    func viewDidDisappear(_ animated: Bool) {
+        orig.viewDidDisappear(animated)
+        KaraokeOverlayPresenter.suspendPlayer()
+    }
+    func viewDidLayoutSubviews() {
+        orig.viewDidLayoutSubviews()
+        KaraokeOverlayPresenter.layoutPlayer(target)
+    }
+}

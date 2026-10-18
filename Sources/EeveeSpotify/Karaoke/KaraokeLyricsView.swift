@@ -64,14 +64,13 @@ struct KaraokeLyricsView: View {
         // UIKit already supplies a viewport in the Canvas view's coordinates.
         .ignoresSafeArea()
         .preferredColorScheme(.dark)
-        .accessibilityAction(.escape) { onDismiss() }
-        .simultaneousGesture(TapGesture().onEnded { KaraokeOverlayPresenter.interact() })
+        .accessibilityAction(.escape) { KaraokeOverlayPresenter.collapsePlayer() }
         .simultaneousGesture(DragGesture(minimumDistance: 20)
             .onChanged { _ in KaraokeOverlayPresenter.interact(dragging: true) }
             .onEnded { value in
                 if value.startLocation.y < UIScreen.main.bounds.height * 0.35,
                    value.translation.height > 70, value.translation.height > abs(value.translation.width) {
-                    onDismiss()
+                    KaraokeOverlayPresenter.collapsePlayer()
                 } else { KaraokeOverlayPresenter.interact() }
             })
         .onReceive(NotificationCenter.default.publisher(for: .eeveeKaraokeOptionsChanged)) { _ in
@@ -149,10 +148,8 @@ private struct KaraokeScrollingLines: View {
                             fontSize: fontSize * (layout.isBackground ? 0.72 : 1),
                             distance: index - (activeLineIndex ?? 0),
                             isBrowsing: isBrowsing,
-                            blurIntensity: options.blurIntensity
-                        )
-                        .contentShape(Rectangle())
-                        .onTapGesture {
+                            blurIntensity: options.blurIntensity,
+                            onSeek: {
                             guard KaraokePlaybackTracker.shared.seek(toMs: max(0, layout.startMs - Int(options.timingOffsetMs))) else {
                                 UINotificationFeedbackGenerator().notificationOccurred(.error)
                                 return
@@ -163,9 +160,8 @@ private struct KaraokeScrollingLines: View {
                             withAnimation(.easeOut(duration: 0.35)) {
                                 proxy.scrollTo(index, anchor: focus)
                             }
-                        }
-                        .accessibilityAddTraits(.isButton)
-                        .accessibilityHint(Text("Seek to this lyric"))
+                            }
+                        )
                         .id(index)
                         .padding(.horizontal, horizontalPadding)
                         .scaleEffect(x: 1, y: flip)
@@ -263,7 +259,28 @@ private struct KaraokeScrollLimits: UIViewRepresentable {
     func makeUIView(context: Context) -> Probe { Probe() }
     func updateUIView(_ view: Probe, context: Context) { view.configure() }
 
-    final class Probe: UIView {
+    final class Probe: UIView, UIGestureRecognizerDelegate {
+        private weak var attachedScroll: UIScrollView?
+        private lazy var blankTap: UITapGestureRecognizer = {
+            let tap = UITapGestureRecognizer(target: self, action: #selector(revealControls))
+            tap.cancelsTouchesInView = false
+            tap.delegate = self
+            return tap
+        }()
+        @objc private func revealControls() {
+            writeDebugLog("[Karaoke][touch] blank tap; reveal controls")
+            KaraokeOverlayPresenter.interact()
+        }
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+            guard let scroll = attachedScroll else { return false }
+            return !KaraokeTextCanvas.visible.allObjects.contains { view in
+                view.isDescendant(of: scroll) && view.containsInk(touch.location(in: view))
+            }
+        }
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
+            other is UITapGestureRecognizer
+        }
+
         override init(frame: CGRect) {
             super.init(frame: frame)
             isUserInteractionEnabled = false
@@ -279,6 +296,11 @@ private struct KaraokeScrollLimits: UIViewRepresentable {
                 if let scroll = view as? UIScrollView {
                     scroll.bounces = false
                     scroll.alwaysBounceVertical = false
+                    if attachedScroll !== scroll {
+                        blankTap.view?.removeGestureRecognizer(blankTap)
+                        attachedScroll = scroll
+                        scroll.addGestureRecognizer(blankTap)
+                    }
                     return
                 }
                 ancestor = view.superview

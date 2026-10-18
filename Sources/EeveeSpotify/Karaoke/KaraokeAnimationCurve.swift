@@ -41,11 +41,11 @@ struct KaraokeAnimationCurve {
                 + (b * b * b - b) * secondDerivatives[index + 1]) * span * span / 6
     }
 
-    static let wordScale = KaraokeAnimationCurve(points: [(0, 0.95), (0.7, 1.0505), (1, 1)])
-    static let letterScale = KaraokeAnimationCurve(points: [(0, 0.95), (0.7, 1.175), (1, 1)])
+    static let wordScale = KaraokeAnimationCurve(points: [(0, 1), (0.7, 1.0505), (1, 1)])
+    static let letterScale = KaraokeAnimationCurve(points: [(0, 1), (0.7, 1.175), (1, 1)])
     static let glow = KaraokeAnimationCurve(points: [(0, 0), (0.15, 1), (0.6, 1), (1, 0)])
-    static let yOffset = KaraokeAnimationCurve(points: [(0, 0.01), (0.9, -1.0 / 60), (1, 0)])
-    static let letterYOffset = KaraokeAnimationCurve(points: [(0, 0.01), (0.9, -1.0 / 56), (1, 0)])
+    static let yOffset = KaraokeAnimationCurve(points: [(0, 0), (0.9, -1.0 / 60), (1, 0)])
+    static let letterYOffset = KaraokeAnimationCurve(points: [(0, 0), (0.9, -1.0 / 56), (1, 0)])
 }
 
 /// Analytical damped oscillator used by the plugin's Spring.ts (Fraktality/spr, MIT).
@@ -71,14 +71,14 @@ struct KaraokeSpring {
 }
 
 struct KaraokeMotionSample {
-    var scale = 0.95
-    var offset = 0.01
+    var scale = 1.0
+    var offset = 0.0
     var glow = 0.0
 }
 
 struct KaraokeMotionSprings {
-    var scale = KaraokeSpring(position: 0.95, frequency: 0.88, damping: 0.64)
-    var offset = KaraokeSpring(position: 0.01, frequency: 1.45, damping: 0.4)
+    var scale = KaraokeSpring(position: 1, frequency: 0.88, damping: 0.64)
+    var offset = KaraokeSpring(position: 0, frequency: 1.45, damping: 0.4)
     var glow = KaraokeSpring(position: 0, frequency: 1.18, damping: 0.56)
 
     mutating func step(target: KaraokeMotionSample, dt: Double, snap: Bool) -> KaraokeMotionSample {
@@ -128,8 +128,8 @@ struct KaraokeWordMotion {
             let baseOffset = KaraokeAnimationCurve.letterYOffset.value(at: localProgress)
             let baseGlow = KaraokeAnimationCurve.glow.value(at: localProgress)
             let target = KaraokeMotionSample(
-                scale: sung ? 1 : (future ? 0.95 : 0.95 + (baseScale - 0.95) * falloff),
-                offset: sung ? 0 : (future ? 0.01 : 0.01 + (baseOffset - 0.01) * falloff),
+                scale: sung ? 1 : (future ? 1 : 1 + (baseScale - 1) * falloff),
+                offset: sung ? 0 : (future ? 0 : baseOffset * falloff),
                 glow: sung || future ? 0 : baseGlow * glowFalloff
             )
             return letterSprings[index].step(target: target, dt: dt, snap: snap)

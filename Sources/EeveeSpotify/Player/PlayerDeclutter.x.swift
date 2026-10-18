@@ -157,7 +157,31 @@ enum PlayerDeclutter {
         return false
     }
 
+    private static var interactionKey: UInt8 = 0
+    private final class CardInteraction {
+        let alpha: CGFloat
+        let enabled: Bool
+        let accessibilityHidden: Bool
+        init(_ cell: UIView) { alpha = cell.alpha; enabled = cell.isUserInteractionEnabled; accessibilityHidden = cell.accessibilityElementsHidden }
+    }
+    static func updateCardInteraction(_ cell: UIView, hidden: Bool) {
+        if hidden {
+            if objc_getAssociatedObject(cell, &interactionKey) == nil {
+                objc_setAssociatedObject(cell, &interactionKey, CardInteraction(cell), .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+            }
+            cell.alpha = 0
+            cell.isUserInteractionEnabled = false
+            cell.accessibilityElementsHidden = true
+        } else if let saved = objc_getAssociatedObject(cell, &interactionKey) as? CardInteraction {
+            cell.alpha = saved.alpha
+            cell.isUserInteractionEnabled = saved.enabled
+            cell.accessibilityElementsHidden = saved.accessibilityHidden
+            objc_setAssociatedObject(cell, &interactionKey, nil, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+        }
+    }
+
     static func resetCard(_ cell: UIView) {
+        updateCardInteraction(cell, hidden: false)
         objc_setAssociatedObject(cell, &cacheKey, nil, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
         objc_setAssociatedObject(cell, &portraitKey, nil, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
     }
@@ -274,7 +298,8 @@ enum PlayerDeclutter {
             if let id = view.accessibilityIdentifier { names += id }
             queue += view.subviews
         }
-        guard names.contains("NowPlaying_ScrollAPI") else { return (nil, false) }
+        guard names.contains("NowPlaying_ScrollAPI") || PlayerPlacement.contains(cell) else { return (nil, false) }
+        guard !names.contains("NowPlaying_ModesImpl") else { return (nil, true) }
         var cardAncestor = cell.superview
         while let current = cardAncestor {
             if let collection = current as? UICollectionView { cardCollections.add(collection); break }
@@ -312,6 +337,7 @@ class PlayerCardCellHook: ClassHook<UICollectionViewCell> {
     func layoutSubviews() {
         orig.layoutSubviews()
         PlayerDeclutter.hideArtistCircles(in: target)
+        PlayerDeclutter.updateCardInteraction(target, hidden: PlayerDeclutter.hiddenCard(for: target) != nil)
     }
 
     func prepareForReuse() {
@@ -322,6 +348,7 @@ class PlayerCardCellHook: ClassHook<UICollectionViewCell> {
     func preferredLayoutAttributesFittingAttributes(_ attributes: UICollectionViewLayoutAttributes) -> UICollectionViewLayoutAttributes {
         let result = orig.preferredLayoutAttributesFittingAttributes(attributes)
         let part = PlayerDeclutter.cardsMeter.measure { PlayerDeclutter.hiddenCard(for: target) }
+        PlayerDeclutter.updateCardInteraction(target, hidden: part != nil)
         guard part != nil else { return result }
         result.size = CGSize(width: result.size.width, height: 0)
         target.clipsToBounds = true
@@ -372,6 +399,13 @@ class PlayerLyricsPreviewHook: ClassHook<UIView> {
 }
 
 func activatePlayerDeclutter() {
+    if !UserDefaults.standard.bool(forKey: "eeveeHideExtraNowPlayingCardsV2") {
+        var options = UserDefaults.playerOptions
+        if !options.hiddenParts.contains(.allCards) { options.hiddenParts.append(.allCards) }
+        UserDefaults.playerOptions = options
+        UserDefaults.standard.set(true, forKey: "eeveeHideExtraNowPlayingCardsV2")
+    }
+
     if !UserDefaults.standard.bool(forKey: "eeveeTrimmedLyricsFooterV1") {
         var options = UserDefaults.playerOptions
         for part in [PlayerPart.share, .queue, .fullScreen, .lyricsPreview, .lyricsCard] where !options.hiddenParts.contains(part) {
