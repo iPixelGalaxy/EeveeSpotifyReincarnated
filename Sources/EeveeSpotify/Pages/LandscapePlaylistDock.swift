@@ -6,6 +6,7 @@ final class LandscapePlaylistDock {
     private(set) weak var bar: UINavigationBar?
     private weak var navigation: UINavigationController?
     private var barAlpha: CGFloat = 1
+    private var barHidden = false
     private weak var menuSource: UIView?
     private weak var menuItem: UIBarButtonItem?
     private let back = LandscapePlaylistDock.button("chevron.left", label: "Back")
@@ -41,13 +42,14 @@ final class LandscapePlaylistDock {
               let navigation = controller.navigationController,
               navigation.navigationBar.window === window else { return }
         let sourceBar = navigation.navigationBar
-        if bar !== sourceBar { restore(); bar = sourceBar; barAlpha = sourceBar.alpha }
+        if bar !== sourceBar { restore(); bar = sourceBar; barAlpha = sourceBar.alpha; barHidden = sourceBar.isHidden }
         self.navigation = navigation
         menuItem = sourceBar.topItem?.rightBarButtonItems?.first
         menuSource = menuItem?.customView
         // Native bar-button wrappers clip relocated children even with clipsToBounds disabled.
         // Keep their actions in place; host the visible glass controls alongside the player.
         sourceBar.alpha = 0
+        sourceBar.isHidden = true
         for button in [back, more] where button.superview !== host { host.addSubview(button) }
         back.frame = host.convert(frames.back, from: window)
         more.frame = host.convert(frames.more, from: window)
@@ -64,6 +66,7 @@ final class LandscapePlaylistDock {
 
     func restore() {
         bar?.alpha = barAlpha
+        bar?.isHidden = barHidden
         back.removeFromSuperview(); more.removeFromSuperview()
         bar = nil; navigation = nil; menuSource = nil; menuItem = nil
     }

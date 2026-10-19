@@ -13,7 +13,6 @@ enum LandscapePlaylistHeader {
     private final class Page {
         weak var root: UIView?
         weak var scroll: UIScrollView?
-        let viewport: NativeViewPlacement
         let list: NativeViewPlacement?
         let cover = UIImageView()
         let sidebar = UIScrollView()
@@ -34,7 +33,7 @@ enum LandscapePlaylistHeader {
         private var headerAlpha: CGFloat = 1
         var visible = true
         init(root: UIView, list: UIScrollView) {
-            self.root = root; scroll = list; viewport = NativeViewPlacement(root)
+            self.root = root; scroll = list
             self.list = root === list ? nil : NativeViewPlacement(list)
             inset = list.contentInset; indicators = list.verticalScrollIndicatorInsets
             adjustment = list.contentInsetAdjustmentBehavior
@@ -48,8 +47,6 @@ enum LandscapePlaylistHeader {
             title.font = .systemFont(ofSize: 17, weight: .bold); title.textColor = .white; title.numberOfLines = 2
             summary.font = .systemFont(ofSize: 11); summary.textColor = .secondaryLabel; summary.numberOfLines = 2
             [cover, title, summary].forEach(sidebar.addSubview)
-            (root.next as? UIViewController)?.traitOverrides.verticalSizeClass = .regular
-            (root.next as? UIViewController)?.traitOverrides.horizontalSizeClass = .compact
             objc_setAssociatedObject(list, &pageRootKey, PageLookup.WeakView(root), .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
         }
         func track(_ sources: [UIImageView]) {
@@ -77,12 +74,10 @@ enum LandscapePlaylistHeader {
         func restore() {
             coverObservations.removeAll(); coverSources.removeAllObjects()
             let offset = scroll?.contentOffset
-            list?.restore(); viewport.restore()
+            list?.restore()
             root?.clipsToBounds = clips
             nativeHeader?.alpha = headerAlpha
             scroll?.backgroundColor = background
-            (root?.next as? UIViewController)?.traitOverrides.remove(UITraitVerticalSizeClass.self)
-            (root?.next as? UIViewController)?.traitOverrides.remove(UITraitHorizontalSizeClass.self)
             if let scroll {
                 scroll.contentInsetAdjustmentBehavior = adjustment
                 scroll.contentInset = inset; scroll.verticalScrollIndicatorInsets = indicators
@@ -117,7 +112,8 @@ enum LandscapePlaylistHeader {
             let details = labels.filter {
                 $0 !== headline && (3..<80).contains($0.text?.trimmingCharacters(in: .whitespacesAndNewlines).count ?? 0)
                     && $0.font.pointSize < headline.font.pointSize
-                    && !["play", "pause", "shuffle", "follow"].contains($0.text?.lowercased() ?? "")
+                    && $0.text?.lowercased() != headline.text?.lowercased()
+                    && !["play", "pause", "shuffle", "follow", "find on this page"].contains($0.text?.lowercased() ?? "")
             }.sorted { $0.font.pointSize > $1.font.pointSize }
             var text = [String]()
             for label in details {
@@ -129,10 +125,6 @@ enum LandscapePlaylistHeader {
         func bind(_ row: PlaylistActionRow, header: UIView) {
             actions = row
             row.compactLayout = true; row.alpha = 1
-            row.download = header.eeveeFirst(UIControl.self) {
-                ($0.accessibilityIdentifier ?? "").lowercased().contains("download")
-                    || ($0.accessibilityLabel ?? "").lowercased().contains("download")
-            }
             sources = [row.play, row.shuffle, row.add, row.share, row.followControl, row.download].compactMap { $0 }
             targets = sources.compactMap { ($0 as? UIControl) ?? $0.eeveeFirst(UIControl.self) }
                 .flatMap { $0.allTargets.map { $0.base as AnyObject } }
@@ -141,7 +133,7 @@ enum LandscapePlaylistHeader {
             apply()
         }
         func apply() {
-            guard visible, let root, let parent = root.superview, let window = root.window,
+            guard visible, let root, let window = root.window,
                   window.bounds.width > window.bounds.height, let scroll else { return }
             LandscapeNavigation.setPlaylist(root, visible: true)
             let safe = window.safeAreaLayoutGuide.layoutFrame
@@ -151,10 +143,9 @@ enum LandscapePlaylistHeader {
             let width = max(180, min(208, (LandscapeNavigation.contentRight(in: window) - left) * 0.25))
             let right = left + width + 16
             let column = CGRect(x: right, y: top, width: max(1, LandscapeNavigation.contentRight(in: window) - right), height: max(1, bottom - top))
-            viewport.place(column, in: window)
-            root.clipsToBounds = true
-            list?.place(root.bounds, in: root)
-            scroll.contentInsetAdjustmentBehavior = .never
+            // UIKit retains ownership of the controller root during navigation transitions.
+            list?.place(column, in: window)
+            if scroll.contentInsetAdjustmentBehavior != .never { scroll.contentInsetAdjustmentBehavior = .never }
             // PL.Header is a sibling overlay, not a collection cell. Its old inset still reserves the entire hero.
             let offset = scroll.contentOffset
             var compactInsets = scroll.contentInset
@@ -165,17 +156,17 @@ enum LandscapePlaylistHeader {
                 scroll.contentOffset = CGPoint(x: offset.x, y: max(0, offset.y))
             }
             nativeHeader?.alpha = 0
-            scroll.backgroundColor = root.backgroundColor
-            if sidebar.superview !== parent { parent.addSubview(sidebar) }
-            sidebar.frame = parent.convert(CGRect(x: left, y: top, width: width, height: column.height), from: window)
-            cover.frame = CGRect(x: 0, y: 0, width: 125, height: 125)
+            if scroll.backgroundColor != root.backgroundColor { scroll.backgroundColor = root.backgroundColor }
+            if sidebar.superview !== root { root.addSubview(sidebar) }
+            sidebar.frame = root.convert(CGRect(x: left, y: top, width: width, height: column.height), from: window)
+            cover.frame = CGRect(x: 0, y: 0, width: 112, height: 112)
             let titleHeight = min(44, title.sizeThatFits(CGSize(width: width, height: 100)).height)
-            title.frame = CGRect(x: 0, y: 133, width: width, height: titleHeight)
+            title.frame = CGRect(x: 0, y: 120, width: width, height: titleHeight)
             summary.frame = CGRect(x: 0, y: title.frame.maxY + 4, width: width, height: 32)
             let actionY = summary.frame.maxY + 10
             if let actions { actions.frame = CGRect(x: 0, y: actionY, width: width, height: actions.compactHeight) }
             sidebar.contentSize = CGSize(width: width, height: actionY + (actions?.compactHeight ?? 0) + 8)
-            if let controller = root.next as? UIViewController { dock.layout(controller, in: window, host: parent) }
+            if let controller = root.next as? UIViewController { dock.layout(controller, in: window, host: root) }
 
         }
     }
@@ -225,6 +216,8 @@ enum LandscapePlaylistHeader {
     }
 
     static func layoutPage(_ root: UIView, list: UIScrollView?, header: UIView?) {
+        guard !updating else { return }
+        updating = true; defer { updating = false }
         let old = objc_getAssociatedObject(root, &pageKey) as? Page
         guard isLandscape(root), let list else {
             old?.restore(); objc_setAssociatedObject(root, &pageKey, nil, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
@@ -342,6 +335,8 @@ enum LandscapePlaylistHeader {
     }
 
     static func hostActions(_ row: PlaylistActionRow, in root: UIView, header: UIView) -> Bool {
+        guard !updating else { return row.compactLayout }
+        updating = true; defer { updating = false }
         guard isLandscape(root), let page = objc_getAssociatedObject(root, &pageKey) as? Page, page.visible else {
             row.compactLayout = false
             return false
@@ -356,6 +351,15 @@ enum LandscapePlaylistHeader {
             if let page = objc_getAssociatedObject(root, &pageKey) as? Page, page.visible, page.dock.hasControls, page.dock.bar === view { return false }
         }
         return nil
+    }
+
+    static func navigationDidLayout(_ bar: UINavigationBar) {
+        guard isLandscape(bar) else { return }
+        for root in pages.allObjects {
+            guard let page = objc_getAssociatedObject(root, &pageKey) as? Page, page.visible, page.dock.bar === bar else { continue }
+            bar.alpha = 0
+            bar.isHidden = true
+        }
     }
 
     static func nativeHit(at point: CGPoint, in window: UIWindow, event: UIEvent?) -> UIView? {
@@ -377,6 +381,14 @@ enum LandscapePlaylistHeader {
     }
 }
 
+class LandscapePlaylistNavigationBarHook: ClassHook<UINavigationBar> {
+    typealias Group = GlassPlaylistGroup
+    func layoutSubviews() {
+        orig.layoutSubviews()
+        if #available(iOS 26.0, *) { LandscapePlaylistHeader.navigationDidLayout(target) }
+    }
+}
+
 class LandscapePlaylistHeaderSizingHook: ClassHook<UICollectionViewCell> {
     typealias Group = GlassPlaylistGroup
     static let targetName = PlaylistPillsCellHook.targetName
@@ -384,6 +396,9 @@ class LandscapePlaylistHeaderSizingHook: ClassHook<UICollectionViewCell> {
         let result = orig.preferredLayoutAttributesFittingAttributes(attributes)
         if #available(iOS 26.0, *), let width = LandscapePlaylistHeader.width(in: target) {
             result.size.width = width
+            if PlaylistChips.toolbar(in: target) != nil, GlassPlaylist.row(near: target)?.curation.hasActions == true {
+                result.size.height = 1
+            }
         }
         if #available(iOS 26.0, *), let height = LandscapePlaylistHeader.height(in: target),
            target.eeveeFirst(UIView.self, where: { $0.accessibilityIdentifier == "PL.Header" }) != nil {

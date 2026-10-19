@@ -5,8 +5,11 @@ import UIKit
 @available(iOS 26.0, *)
 final class PlaylistActionRow: UIView {
     static weak var current: PlaylistActionRow?
-    var compactLayout = false
-    var compactHeight: CGFloat { followControl == nil ? 96 : 144 }
+    var compactLayout = false {
+        didSet { if compactLayout != oldValue { placeCuration(); setNeedsLayout() } }
+    }
+    let curation = PlaylistCurationBar()
+    var compactHeight: CGFloat { (followControl == nil ? 96 : 144) + (curation.hasSecondaryActions ? 52 : 0) }
     weak var download: UIView?
     weak var shuffle: UIView?
     weak var play: UIView?
@@ -30,6 +33,7 @@ final class PlaylistActionRow: UIView {
     }
 
     func place() {
+        placeCuration()
         guard !compactLayout else { alpha = 1; return }
         guard let host = superview, host.window != nil else { return }
         if let anchor, anchor.window != nil, anchor.bounds.height > 0 {
@@ -47,6 +51,26 @@ final class PlaylistActionRow: UIView {
         UIView.animate(withDuration: 0.2, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction]) {
             self.alpha = pinned ? 0 : 1
         }
+    }
+
+    func placeCuration() {
+        guard curation.hasActions else { return }
+        curation.compact = compactLayout
+        if compactLayout {
+            if bounds.height != compactHeight {
+                frame.size.height = compactHeight
+                if let sidebar = superview as? UIScrollView { sidebar.contentSize.height = frame.maxY + 8 }
+            }
+            if curation.superview !== self { addSubview(curation) }
+            curation.frame = bounds
+            curation.isHidden = false
+        } else if let host = superview, let toolbar = curation.toolbar, toolbar.window != nil {
+            if curation.superview !== host { host.addSubview(curation) }
+            let anchor = toolbar.convert(toolbar.bounds, to: host)
+            curation.frame = CGRect(x: 16, y: anchor.midY - 22, width: max(0, host.bounds.width - 32), height: 44)
+            curation.isHidden = !curation.frame.intersects(host.bounds)
+        } else { curation.isHidden = true }
+        curation.setNeedsLayout()
     }
 
     private func collapsed() -> Bool {
@@ -137,7 +161,8 @@ final class PlaylistActionRow: UIView {
     override func layoutSubviews() {
         super.layoutSubviews()
         if compactLayout {
-            playButton.frame = CGRect(x: 0, y: 0, width: bounds.width, height: 44)
+            playButton.frame = CGRect(x: 0, y: 0, width: bounds.width - (curation.hasAdd ? 52 : 0), height: 44)
+            curation.frame = bounds
             let circles = [downloadButton, shuffleButton, addButton, shareButton].filter { !$0.isHidden }
             let side: CGFloat = 44
             let gap = max(0, min(8, (bounds.width - CGFloat(circles.count) * side) / CGFloat(max(1, circles.count - 1))))
@@ -146,7 +171,7 @@ final class PlaylistActionRow: UIView {
                 button.frame = CGRect(x: x, y: 52, width: side, height: side); x += side + gap
             }
             shuffleDot.center = CGPoint(x: side / 2, y: side - 7)
-            followButton.frame = CGRect(x: 0, y: 104, width: bounds.width, height: 40)
+            followButton.frame = CGRect(x: 0, y: curation.hasSecondaryActions ? 156 : 104, width: bounds.width, height: 40)
             return
         }
         let side: CGFloat = 48, gap: CGFloat = 12
@@ -158,6 +183,7 @@ final class PlaylistActionRow: UIView {
         }
         playButton.frame = CGRect(x: bounds.midX - playWidth / 2, y: y, width: playWidth, height: side)
         shuffleButton.frame = CGRect(x: playButton.frame.minX - gap - side, y: y, width: side, height: side)
+        downloadButton.frame = CGRect(x: shuffleButton.frame.minX - gap - side, y: y, width: side, height: side)
         shuffleDot.center = CGPoint(x: side / 2, y: side - 7)
         var x = playButton.frame.maxX + gap
         for button in [addButton, shareButton, followButton] where !button.isHidden {
@@ -170,14 +196,28 @@ final class PlaylistActionRow: UIView {
     private func forward(_ source: UIView?, _ name: String) {
         guard let source else { return }
         let control = (source as? UIControl) ?? source.eeveeFirst(UIControl.self)
-        let fired = control.map { EeveeFireTap($0) } ?? false
+        let fired = EeveeFireTap(control ?? source)
         if !fired { eeveeLog("[EeveeSpotify][Glass] Playlist %@ tap FAILED", name) }
         for delay in [0.4, 1.2, 2.5] { DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in self?.sync() } }
     }
 
     func sync() {
-        downloadButton.isHidden = !compactLayout || download == nil
-        downloadButton.tintColor = download?.accessibilityLabel?.lowercased().contains("remove") == true ? Theme.accent : .white
+        let downloadHidden = download == nil
+        if downloadButton.isHidden != downloadHidden { downloadButton.isHidden = downloadHidden; setNeedsLayout() }
+        let state = ((download?.accessibilityLabel ?? "") + " " + (download?.accessibilityValue ?? "")).lowercased()
+        let selected = (download as? UIControl)?.isSelected == true
+            || download?.eeveeFirst(UIControl.self, where: { $0.isSelected }) != nil
+            || download?.accessibilityTraits.contains(.selected) == true
+        let greenIcon = download?.eeveeFirst(UIImageView.self, where: {
+            var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+            return $0.tintColor.getRed(&r, green: &g, blue: &b, alpha: &a) && a > 0.5 && g > r + 0.15 && g > b + 0.1
+        }) != nil
+        let downloaded = selected || greenIcon || state.contains("remove") || (state.contains("downloaded") && !state.contains("not downloaded"))
+        var downloadConfig = downloadButton.configuration
+        downloadConfig?.baseForegroundColor = downloaded ? Theme.accent : .white
+        if downloadButton.configuration != downloadConfig { downloadButton.configuration = downloadConfig }
+        downloadButton.accessibilityLabel = download?.accessibilityLabel
+        downloadButton.accessibilityValue = download?.accessibilityValue
         if addButton.isHidden != (add == nil) {
             addButton.isHidden = add == nil
             setNeedsLayout()

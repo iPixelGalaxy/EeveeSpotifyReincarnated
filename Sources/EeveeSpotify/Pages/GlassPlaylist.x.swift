@@ -9,6 +9,7 @@ enum GlassPlaylist {
     static let meter = PerfMeter("Glass][Playlist")
     private static var backdropKey: UInt8 = 0
     private static var logged = false
+    private static var styling = false
     private static var headerKey: UInt8 = 0
     private static var listKey: UInt8 = 0
     private static var heroKey: UInt8 = 0
@@ -43,6 +44,8 @@ enum GlassPlaylist {
     }
 
     static func style(_ root: UIView) {
+        guard !styling else { return }
+        styling = true; defer { styling = false }
         let background: UIColor = LandscapePlaylistHeader.isLandscape(root) ? UIColor(white: 18.0 / 255, alpha: 1) : .black
         if root.backgroundColor != background { root.backgroundColor = background }
         let playlistHeader = header(in: root)
@@ -74,7 +77,7 @@ enum GlassPlaylist {
                 hero.track(coverView)
                 artwork.map { if $0.alpha != 0 { $0.alpha = 0 } }
             } else {
-                artwork.map { if $0.alpha == 0 { $0.alpha = 1 } }
+                if !LandscapePlaylistHeader.isLandscape(root) { artwork.map { if $0.alpha == 0 { $0.alpha = 1 } } }
             }
         }
 
@@ -221,6 +224,11 @@ extension GlassPlaylist {
         row.share = share
         row.explore = explore
         row.followControl = follow
+        row.download = controls.eeveeFirst(UIView.self) {
+            let identity = (($0.accessibilityIdentifier ?? "") + " " + ($0.accessibilityLabel ?? "")).lowercased()
+            return identity.contains("download") && ($0 is UIControl || $0.gestureRecognizers?.isEmpty == false)
+        }
+        row.download.map { if let holder = holder(of: $0) { PlayerDeclutter.vanish(holder) } }
         row.anchor = add ?? shuffle
         row.playHolder = holder(of: play)
         row.controlsRow = wideAncestor(of: shuffle, below: host)
@@ -228,6 +236,7 @@ extension GlassPlaylist {
         if !sidebar && (row.superview !== host || host.subviews.last !== row) { host.addSubview(row) }
         row.place()
         row.sync()
+        PlaylistChips.bind(in: host, row: row)
         var ancestor = host.superview
         while let view = ancestor, !(view is UIScrollView) { ancestor = view.superview }
         row.follow(scroll ?? ancestor as? UIScrollView)
@@ -236,6 +245,7 @@ extension GlassPlaylist {
     }
 
     static func row(near view: UIView) -> PlaylistActionRow? {
+        if let row = objc_getAssociatedObject(view, &rowKey) as? PlaylistActionRow { return row }
         if let row = (objc_getAssociatedObject(view, &nearRowKey) as? PageLookup.WeakView)?.view as? PlaylistActionRow { return row }
         var ancestor = view.superview
         while let current = ancestor {
@@ -277,6 +287,16 @@ extension GlassPlaylist {
     }
 }
 
+class PlaylistDownloadSelectionHook: ClassHook<UIControl> {
+    typealias Group = GlassPlaylistGroup
+    func setSelected(_ selected: Bool) {
+        orig.setSelected(selected)
+        guard #available(iOS 26.0, *), let row = GlassPlaylist.row(near: target), let source = row.download,
+              target === source || target.isDescendant(of: source) else { return }
+        row.sync()
+    }
+}
+
 class GlassPlaylistHook: ClassHook<UIViewController> {
     typealias Group = GlassPlaylistGroup
     static let targetName = "_TtC35ListUXPlatform_FreeTierPlaylistImpl17FTPViewController"
@@ -290,12 +310,16 @@ class GlassPlaylistHook: ClassHook<UIViewController> {
     func viewWillAppear(_ animated: Bool) {
         orig.viewWillAppear(animated)
         guard #available(iOS 26.0, *), let root = target.viewIfLoaded else { return }
+        eeveeLog("[Glass][Playlist] entering landscape=%d", LandscapePlaylistHeader.isLandscape(root) ? 1 : 0)
         LandscapePlaylistHeader.setVisible(root, true)
-        root.layoutIfNeeded()
+        root.setNeedsLayout()
     }
 
     func viewWillDisappear(_ animated: Bool) {
-        if #available(iOS 26.0, *) { LandscapePlaylistHeader.setVisible(target.viewIfLoaded, false) }
+        if #available(iOS 26.0, *) {
+            LandscapePlaylistHeader.setVisible(target.viewIfLoaded, false)
+            target.viewIfLoaded.flatMap { GlassPlaylist.row(near: $0) }?.curation.suspend()
+        }
         orig.viewWillDisappear(animated)
     }
 
@@ -303,6 +327,7 @@ class GlassPlaylistHook: ClassHook<UIViewController> {
     func viewDidAppear(_ animated: Bool) {
         orig.viewDidAppear(animated)
         guard #available(iOS 26.0, *) else { return }
+        eeveeLog("[Glass][Playlist] appeared")
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak target] in
             if let root = target?.viewIfLoaded, root.window != nil { GlassPlaylist.style(root) }
         }
@@ -460,36 +485,6 @@ class PlaylistHeaderLayoutHook: ClassHook<UIView> {
         guard #available(iOS 26.0, *), PlaylistHeader.contains(target) else { return }
         if LandscapePlaylistHeader.isLandscape(target) { LandscapePlaylistHeader.layout(target) }
         else { GlassPlaylist.centerTitleBlock(in: target) }
-    }
-}
-
-// Curation pills (Add, Edit, Sort, …) already sit on a blur view; its effect is swapped for real glass.
-@available(iOS 26.0, *)
-enum PlaylistChips {
-    private static var verdictKey: UInt8 = 0
-    private static var logged = false
-
-    static func style(_ button: UIView) {
-        let verdict = objc_getAssociatedObject(button, &verdictKey) as? Bool
-        if verdict == false { return }
-        guard button.subviews.first is UIVisualEffectView, button.bounds.height > 0 else { return }
-        if verdict == nil {
-            var ancestor = button.superview
-            var inToolbar = false
-            for _ in 0..<10 {
-                guard let view = ancestor else { break }
-                if view.accessibilityIdentifier == "PlaylistCuration.Row.CurationActionsToolbar" { inToolbar = true; break }
-                ancestor = view.superview
-            }
-            objc_setAssociatedObject(button, &verdictKey, inToolbar, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
-            guard inToolbar else { return }
-        }
-        if GlassKit.glassBlur(in: button) {
-            if !logged {
-                logged = true
-                eeveeLog("[EeveeSpotify][Glass] Playlist pills on glass")
-            }
-        }
     }
 }
 
