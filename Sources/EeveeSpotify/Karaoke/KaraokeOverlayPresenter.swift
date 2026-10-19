@@ -149,6 +149,11 @@ final class KaraokeOverlayPresenter {
         if close { collapsePlayer() } else { interact() }
     }
 
+    static func landscapeGeometry(for view: UIView) -> KaraokeLandscapeSidebar.Geometry? {
+        guard isPresented, isLandscape else { return nil }
+        return landscapeSidebar?.geometry(for: view)
+    }
+
     static func routedControlHit(at point: CGPoint, in window: UIWindow, event: UIEvent?) -> UIView? {
         guard isPresented, canvas?.window === window else { return nil }
         if isLandscape, let hit = landscapeSidebar?.nativeHit(at: point, in: window, event: event) { return hit }
@@ -180,6 +185,7 @@ final class KaraokeOverlayPresenter {
     }
 
     static func registerControls(_ view: UIView) {
+        if isPresented, let window = canvas?.window, view.window !== window { return }
         if focused, nativeStates[ObjectIdentifier(view)]?.view !== view { nativeStates[ObjectIdentifier(view)] = NativeState(view) }
         if controls !== view {
             writeDebugLog("[Karaoke][units] bound playback controls window=\(view.window != nil) frame=\(view.frame)")
@@ -192,6 +198,7 @@ final class KaraokeOverlayPresenter {
         }
     }
     static func registerDuration(_ view: UIView) {
+        if isPresented, let window = canvas?.window, view.window !== window { return }
         if focused, nativeStates[ObjectIdentifier(view)]?.view !== view { nativeStates[ObjectIdentifier(view)] = NativeState(view) }
         duration = view
         if isPresented { updateFrame() }
@@ -555,6 +562,7 @@ final class KaraokeOverlayPresenter {
     }
 
     static func registerInformation(_ root: UIView) {
+        if isPresented, let window = canvas?.window, root.window !== window { return }
         if focused, nativeStates[ObjectIdentifier(root)]?.view !== root { nativeStates[ObjectIdentifier(root)] = NativeState(root) }
         information = root
         if isPresented { updateFrame() } else { restoreIfNeeded() }
@@ -724,6 +732,7 @@ final class KaraokeOverlayPresenter {
             sidebar.attach(duration, as: .duration)
             sidebar.attach(controls, as: .controls)
             sidebar.setNeedsLayout()
+            sidebar.layoutIfNeeded()
             if canHideFooter { footer?.alpha = 0; footer?.isUserInteractionEnabled = false }
         }
         KaraokeRotation.update(controller: hosting.parent, enabled: isPresented)

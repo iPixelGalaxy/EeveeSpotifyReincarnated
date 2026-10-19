@@ -6,6 +6,7 @@ struct KaraokeCreditsFooterView: View {
     var showWriters = true
     var showDetails = true
     var unfaded = false
+    var bottomPadding: CGFloat = 12
 
     private var providerLabel: String? {
         nonEmpty(lyrics.providerName) ?? nonEmpty(lyrics.providerCode).map { _ in SpicyLyricsRepository.providerName }
@@ -57,7 +58,7 @@ struct KaraokeCreditsFooterView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 20)
         .padding(.top, 8)
-        .padding(.bottom, 12)
+        .padding(.bottom, bottomPadding)
     }
 }
 

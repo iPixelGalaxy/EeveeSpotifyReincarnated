@@ -253,9 +253,19 @@ class KaraokeVideoSwitchHook: ClassHook<UIView> {
 class KaraokeCompactVisibilityHook: ClassHook<UIView> {
     typealias Group = KaraokeFooterGroup
     @objc(setFrame:) func setFrame(_ frame: CGRect) {
+        if let geometry = KaraokeOverlayPresenter.landscapeGeometry(for: target) {
+            orig.setFrame(geometry.frame)
+            return
+        }
         let adjustedHeader = KaraokeOverlayPresenter.beginNativeHeaderFrame(target)
         orig.setFrame(frame)
         if adjustedHeader { KaraokeOverlayPresenter.endNativeHeaderFrame() }
+    }
+    @objc(setBounds:) func setBounds(_ bounds: CGRect) {
+        orig.setBounds(KaraokeOverlayPresenter.landscapeGeometry(for: target)?.bounds ?? bounds)
+    }
+    @objc(setCenter:) func setCenter(_ center: CGPoint) {
+        orig.setCenter(KaraokeOverlayPresenter.landscapeGeometry(for: target)?.center ?? center)
     }
     @objc(setAlpha:) func setAlpha(_ alpha: CGFloat) {
         orig.setAlpha(KaraokeOverlayPresenter.lockedCompactAlpha(alpha, in: target))
@@ -270,7 +280,8 @@ class KaraokeCompactVisibilityHook: ClassHook<UIView> {
         orig.setUserInteractionEnabled(KaraokeOverlayPresenter.lockedCompactAlpha(enabled ? 1 : 0, in: target) > 0)
     }
     @objc(setTransform:) func setTransform(_ transform: CGAffineTransform) {
-        orig.setTransform(KaraokeOverlayPresenter.lockedCompactTransform(transform, in: target))
+        orig.setTransform(KaraokeOverlayPresenter.landscapeGeometry(for: target)?.transform
+            ?? KaraokeOverlayPresenter.lockedCompactTransform(transform, in: target))
     }
     func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
         orig.point(inside: point, with: event) || KaraokeOverlayPresenter.compactHit(point, in: target)

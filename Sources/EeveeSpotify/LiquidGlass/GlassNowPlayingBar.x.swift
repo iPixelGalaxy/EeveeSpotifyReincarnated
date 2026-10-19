@@ -16,6 +16,8 @@ enum GlassNowPlayingBar {
     private static var styled: Styled?
     private static var portrait: NativeViewPlacement?
     private static var progress: NativeViewPlacement?
+    private static let progressMask = CAShapeLayer()
+    private static var originalProgressMask: CALayer?
     private static var options = UserDefaults.nowPlayingBarOptions
     private static let observer = NotificationCenter.default.addObserver(
         forName: .eeveeNowPlayingBarOptionsChanged, object: nil, queue: .main
@@ -63,8 +65,10 @@ enum GlassNowPlayingBar {
         }
         guard let card else { return }
         if progress?.view?.isDescendant(of: host) != true {
+            if let view = progress?.view, view.layer.mask === progressMask { view.layer.mask = originalProgressMask }
             progress?.restore()
             progress = findProgress(in: host, card: card).map(NativeViewPlacement.init)
+            originalProgressMask = progress?.view?.layer.mask
             if let view = progress?.view {
                 eeveeLog("[EeveeSpotify][Glass] Mini progress %@", NSStringFromClass(type(of: view)))
             }
@@ -82,9 +86,16 @@ enum GlassNowPlayingBar {
         if let window = host.window, let view = progress?.view {
             let rect = card.convert(card.bounds, to: window)
             let height = min(2, max(1, view.bounds.height))
-            progress?.place(CGRect(x: rect.minX + 20, y: rect.maxY - height - 5,
-                                   width: max(1, rect.width - 40), height: height), in: window)
+            progress?.place(CGRect(x: rect.minX, y: rect.maxY - height,
+                                   width: rect.width, height: height), in: window)
             view.layoutIfNeeded()
+            // Keep the native line at the bottom, clipped to the same capsule as the glass.
+            let capsule = view.convert(card.bounds, from: card)
+            CATransaction.begin(); CATransaction.setDisableActions(true)
+            progressMask.frame = view.bounds
+            progressMask.path = UIBezierPath(roundedRect: capsule, cornerRadius: capsule.height / 2).cgPath
+            view.layer.mask = progressMask
+            CATransaction.commit()
         }
         if artwork?.isDescendant(of: card) != true { artwork = findArtwork(in: card) }
         let frame = card.convert(card.bounds, to: host)

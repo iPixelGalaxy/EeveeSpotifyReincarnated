@@ -130,6 +130,12 @@ private struct KaraokeScrollingLines: View {
     @State private var isDragging = false
     @State private var resumeAt = Date.distantPast
     @State private var creditsAtBottom = false
+    @State private var revealedCredits = false
+    private let creditsID = "KaraokeCreditsEnd"
+    private var lyricsEnded: Bool {
+        guard options.pinnedFooterMode != .full, let end = layouts.map(\.endMs).max() else { return false }
+        return currentMs >= end
+    }
     @State private var creditsTopPadding: CGFloat = 0
     @State private var naturalContentHeight: CGFloat = .infinity
     @State private var pinnedCreditsHeight: CGFloat = 0
@@ -140,7 +146,7 @@ private struct KaraokeScrollingLines: View {
     @ViewBuilder private var pinnedFooter: some View {
         if options.pinnedFooterMode != .off {
             ScrollView(showsIndicators: false) {
-                KaraokeCreditsFooterView(lyrics: lyrics, showWriters: options.pinnedFooterMode == .full)
+                KaraokeCreditsFooterView(lyrics: lyrics, showWriters: options.pinnedFooterMode == .full, unfaded: true)
                     .fixedSize(horizontal: false, vertical: true)
                     .background(GeometryReader { geometry in
                         Color.clear.preference(key: KaraokePinnedCreditsHeight.self, value: geometry.size.height)
@@ -224,29 +230,25 @@ private struct KaraokeScrollingLines: View {
                         }
 
                         if options.pinnedFooterMode != .full {
-                            KaraokeCreditsFooterView(lyrics: lyrics, showDetails: options.pinnedFooterMode == .off, unfaded: creditsAtBottom)
+                            KaraokeCreditsFooterView(lyrics: lyrics, showDetails: options.pinnedFooterMode == .off, unfaded: creditsAtBottom, bottomPadding: 0)
                                 .padding(.top, creditsTopPadding)
                                 .background(GeometryReader { geometry in
-                                    Color.clear.preference(key: KaraokeCreditsBottomKey.self,
-                                        value: geometry.frame(in: .named("KaraokeLyricsScroll")).maxY)
-                                        .preference(key: KaraokeContentBottomKey.self,
-                                            value: geometry.frame(in: .named("KaraokeLyricsContent")).maxY)
+                                    Color.clear.preference(key: KaraokeContentBottomKey.self,
+                                        value: geometry.frame(in: .named("KaraokeLyricsContent")).maxY)
                                 })
                                 .scaleEffect(x: 1, y: flip)
+                                .id(creditsID)
                         } else {
                             Color.clear.frame(height: max(fontSize * 1.1, viewportHeight * 0.65))
                         }
 
                     }
                     .frame(maxWidth: .infinity)
-                    .background(KaraokeScrollLimits())
+                    .background(KaraokeScrollLimits(atBottom: $creditsAtBottom))
                     .coordinateSpace(name: "KaraokeLyricsContent")
                 }
                 .frame(height: viewportHeight)
                 .coordinateSpace(name: "KaraokeLyricsScroll")
-                .onPreferenceChange(KaraokeCreditsBottomKey.self) { bottom in
-                    creditsAtBottom = bottom.isFinite && bottom <= viewportHeight + 1
-                }
                 .onPreferenceChange(KaraokeContentBottomKey.self) { bottom in
                     guard bottom.isFinite, options.pinnedFooterMode != .full else { return }
                     // For short songs, fill above credits rather than leaving empty space below them.
@@ -256,11 +258,14 @@ private struct KaraokeScrollingLines: View {
                 }
                 .onChange(of: viewportHeight) { height in
                     if naturalContentHeight.isFinite, options.pinnedFooterMode != .full { creditsTopPadding = max(0, height - naturalContentHeight) }
-                    if !isBrowsing, let activeLineIndex { proxy.scrollTo(activeLineIndex, anchor: focus) }
+                    if !isBrowsing {
+                        if lyricsEnded { proxy.scrollTo(creditsID, anchor: .bottom) }
+                        else if let activeLineIndex { proxy.scrollTo(activeLineIndex, anchor: focus) }
+                    }
                 }
                 .mask(
                     LinearGradient(stops: [
-                        .init(color: .clear, location: 0),
+                        .init(color: creditsAtBottom && options.pinnedFooterMode != .full ? .black : .clear, location: 0),
                         .init(color: .black, location: 0.08),
                         .init(color: .black, location: 0.88),
                         .init(color: creditsAtBottom && options.pinnedFooterMode != .full ? .black : .clear, location: 1)
@@ -279,22 +284,32 @@ private struct KaraokeScrollingLines: View {
                     }
                 )
                 .onAppear {
-                    guard let activeLineIndex = activeLineIndex, activeLineIndex < lyrics.lines.count else { return }
-                    proxy.scrollTo(activeLineIndex, anchor: focus)
+                    if lyricsEnded {
+                        revealedCredits = true
+                        proxy.scrollTo(creditsID, anchor: .bottom)
+                    } else if let activeLineIndex, activeLineIndex < lyrics.lines.count {
+                        proxy.scrollTo(activeLineIndex, anchor: focus)
+                    }
                 }
                 .onChange(of: activeLineIndex) { newIndex in
-                    guard !isBrowsing, let newIndex = newIndex, newIndex < lyrics.lines.count else { return }
+                    guard !isBrowsing, !lyricsEnded, let newIndex = newIndex, newIndex < lyrics.lines.count else { return }
                     withAnimation(scrollAnimation) {
                         proxy.scrollTo(newIndex, anchor: focus)
                     }
                 }
                 .onChange(of: currentMs) { _ in
-                    guard isBrowsing, !isDragging, Date() >= resumeAt else { return }
-                    isBrowsing = false
-                    if let activeLineIndex = activeLineIndex {
-                        withAnimation(scrollAnimation) {
-                            proxy.scrollTo(activeLineIndex, anchor: focus)
+                    if !lyricsEnded { revealedCredits = false }
+                    if isBrowsing {
+                        guard !isDragging, Date() >= resumeAt else { return }
+                        isBrowsing = false
+                        if lyricsEnded { revealedCredits = false }
+                        else if let activeLineIndex {
+                            withAnimation(scrollAnimation) { proxy.scrollTo(activeLineIndex, anchor: focus) }
                         }
+                    }
+                    if lyricsEnded, !revealedCredits, !isDragging {
+                        revealedCredits = true
+                        withAnimation(scrollAnimation) { proxy.scrollTo(creditsID, anchor: .bottom) }
                     }
                 }
                 // Flip the list and counter-flip rows; y-only so leading/trailing alignment isn't mirrored.
@@ -307,11 +322,6 @@ private struct KaraokeScrollingLines: View {
 }
 
 
-private struct KaraokeCreditsBottomKey: PreferenceKey {
-    static var defaultValue: CGFloat = .infinity
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
-}
-
 private struct KaraokeContentBottomKey: PreferenceKey {
     static var defaultValue: CGFloat = .infinity
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
@@ -319,11 +329,28 @@ private struct KaraokeContentBottomKey: PreferenceKey {
 
 /// Scope bounce changes to this lyrics scroll view, never to Spotify's global scroll appearance.
 private struct KaraokeScrollLimits: UIViewRepresentable {
+    @Binding var atBottom: Bool
     func makeUIView(context: Context) -> Probe { Probe() }
-    func updateUIView(_ view: Probe, context: Context) { view.configure() }
+    func updateUIView(_ view: Probe, context: Context) {
+        view.onBottomChange = { bottom in if atBottom != bottom { atBottom = bottom } }
+        view.configure()
+    }
 
     final class Probe: UIView, UIGestureRecognizerDelegate {
         private weak var attachedScroll: UIScrollView?
+        var onBottomChange: ((Bool) -> Void)?
+        private var observations = [NSKeyValueObservation]()
+        private var lastBottom: Bool?
+
+        private func publishBottom() {
+            guard let scroll = attachedScroll, scroll.bounds.height > 0 else { return }
+            let maximum = max(-scroll.adjustedContentInset.top,
+                scroll.contentSize.height - scroll.bounds.height + scroll.adjustedContentInset.bottom)
+            let bottom = scroll.contentOffset.y >= maximum - 2
+            guard bottom != lastBottom else { return }
+            lastBottom = bottom
+            DispatchQueue.main.async { [weak self] in self?.onBottomChange?(bottom) }
+        }
         private lazy var blankTap: UITapGestureRecognizer = {
             let tap = UITapGestureRecognizer(target: self, action: #selector(revealControls))
             tap.cancelsTouchesInView = false
@@ -359,11 +386,22 @@ private struct KaraokeScrollLimits: UIViewRepresentable {
                 if let scroll = view as? UIScrollView {
                     scroll.bounces = false
                     scroll.alwaysBounceVertical = false
+                    scroll.contentInsetAdjustmentBehavior = .never
+                    if scroll.contentInset.bottom != 0 {
+                        var insets = scroll.contentInset; insets.bottom = 0; scroll.contentInset = insets
+                    }
                     if attachedScroll !== scroll {
                         blankTap.view?.removeGestureRecognizer(blankTap)
                         attachedScroll = scroll
+                        lastBottom = nil
+                        observations = [
+                            scroll.observe(\.contentOffset, options: [.new]) { [weak self] _, _ in self?.publishBottom() },
+                            scroll.observe(\.contentSize, options: [.new]) { [weak self] _, _ in self?.publishBottom() },
+                            scroll.observe(\.bounds, options: [.new]) { [weak self] _, _ in self?.publishBottom() }
+                        ]
                         scroll.addGestureRecognizer(blankTap)
                     }
+                    publishBottom()
                     return
                 }
                 ancestor = view.superview

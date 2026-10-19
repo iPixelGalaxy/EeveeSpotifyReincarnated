@@ -18,20 +18,30 @@ struct KaraokeSpaceGravityView: View {
             KaraokeGravityStage(layouts: layouts, options: options)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .clipped()
-            if showsCredits {
-                ScrollView(showsIndicators: false) {
-                    KaraokeCreditsFooterView(lyrics: lyrics)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .background(GeometryReader { geometry in
-                            Color.clear.preference(key: KaraokeGravityCreditsHeight.self, value: geometry.size.height)
-                        })
+            if showsCredits { credits }
+            else {
+                TimelineView(.periodic(from: .now, by: 0.25)) { _ in
+                    let end = layouts.map(\.endMs).max() ?? Int.max
+                    let position = KaraokePlaybackTracker.shared.currentPositionMs() + Int(options.timingOffsetMs)
+                    if position >= end { credits }
                 }
-                .frame(height: min(creditsHeight, max(0, size.height * 0.28)))
+                .fixedSize(horizontal: false, vertical: true)
             }
         }
         .onPreferenceChange(KaraokeGravityCreditsHeight.self) { height in
             if height.isFinite, abs(height - creditsHeight) > 0.5 { creditsHeight = height }
         }
+    }
+
+    private var credits: some View {
+        ScrollView(showsIndicators: false) {
+            KaraokeCreditsFooterView(lyrics: lyrics, unfaded: true, bottomPadding: 0)
+                .fixedSize(horizontal: false, vertical: true)
+                .background(GeometryReader { geometry in
+                    Color.clear.preference(key: KaraokeGravityCreditsHeight.self, value: geometry.size.height)
+                })
+        }
+        .frame(height: min(creditsHeight, max(0, size.height * 0.28)))
     }
 }
 
