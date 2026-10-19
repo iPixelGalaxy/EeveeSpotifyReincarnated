@@ -437,7 +437,6 @@ class PlaylistListHook: ClassHook<UIScrollView> {
     func layoutSubviews() {
         orig.layoutSubviews()
         guard #available(iOS 26.0, *) else { return }
-        LandscapePlaylistHeader.listDidLayout(target)
         PlaylistListPaint.meter.measure { PlaylistListPaint.clear(target) }
         GlassPlaylist.row(near: target)?.place()
     }

@@ -24,9 +24,6 @@ enum LandscapePlaylistHeader {
         private var targets = [AnyObject]()
         private var coverObservations = [NSKeyValueObservation]()
         private let coverSources = NSHashTable<UIImageView>.weakObjects()
-        let inset: UIEdgeInsets
-        let indicators: UIEdgeInsets
-        let adjustment: UIScrollView.ContentInsetAdjustmentBehavior
         let clips: Bool
         let background: UIColor?
         private weak var nativeHeader: UIView?
@@ -35,8 +32,6 @@ enum LandscapePlaylistHeader {
         init(root: UIView, list: UIScrollView) {
             self.root = root; scroll = list
             self.list = root === list ? nil : NativeViewPlacement(list)
-            inset = list.contentInset; indicators = list.verticalScrollIndicatorInsets
-            adjustment = list.contentInsetAdjustmentBehavior
             clips = root.clipsToBounds; background = list.backgroundColor
             cover.contentMode = .scaleAspectFill; cover.clipsToBounds = true
             cover.layer.cornerRadius = 10; cover.layer.cornerCurve = .continuous
@@ -73,15 +68,11 @@ enum LandscapePlaylistHeader {
         }
         func restore() {
             coverObservations.removeAll(); coverSources.removeAllObjects()
-            let offset = scroll?.contentOffset
             list?.restore()
             root?.clipsToBounds = clips
             nativeHeader?.alpha = headerAlpha
             scroll?.backgroundColor = background
             if let scroll {
-                scroll.contentInsetAdjustmentBehavior = adjustment
-                scroll.contentInset = inset; scroll.verticalScrollIndicatorInsets = indicators
-                if let offset { scroll.contentOffset = offset }
                 objc_setAssociatedObject(scroll, &pageRootKey, nil, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
             }
             dock.restore()
@@ -145,16 +136,7 @@ enum LandscapePlaylistHeader {
             let column = CGRect(x: right, y: top, width: max(1, LandscapeNavigation.contentRight(in: window) - right), height: max(1, bottom - top))
             // UIKit retains ownership of the controller root during navigation transitions.
             list?.place(column, in: window)
-            if scroll.contentInsetAdjustmentBehavior != .never { scroll.contentInsetAdjustmentBehavior = .never }
-            // PL.Header is a sibling overlay, not a collection cell. Its old inset still reserves the entire hero.
-            let offset = scroll.contentOffset
-            var compactInsets = scroll.contentInset
-            compactInsets.top = 0; compactInsets.bottom = 0
-            if scroll.contentInset != compactInsets {
-                scroll.contentInset = compactInsets
-                scroll.verticalScrollIndicatorInsets = .zero
-                scroll.contentOffset = CGPoint(x: offset.x, y: max(0, offset.y))
-            }
+            // Spotify observes offsets/insets to reload this list. Writing them here creates a layout/reload loop.
             nativeHeader?.alpha = 0
             if scroll.backgroundColor != root.backgroundColor { scroll.backgroundColor = root.backgroundColor }
             if sidebar.superview !== root { root.addSubview(sidebar) }
@@ -253,13 +235,6 @@ enum LandscapePlaylistHeader {
             page.suspend()
             LandscapeNavigation.setPlaylist(root, visible: false)
         }
-    }
-
-    static func listDidLayout(_ list: UIScrollView) {
-        guard !updating, let root = pageRoot(for: list), isLandscape(root),
-              let page = objc_getAssociatedObject(root, &pageKey) as? Page else { return }
-        updating = true; defer { updating = false }
-        page.apply()
     }
 
     private static func contentLayout(in view: UIView) -> UIView? {
