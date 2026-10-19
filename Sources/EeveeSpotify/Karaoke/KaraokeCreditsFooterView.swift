@@ -7,6 +7,37 @@ struct KaraokeCreditsFooterView: View {
     var showDetails = true
     var unfaded = false
     var bottomPadding: CGFloat = 12
+    @State private var resolvedCredits: ResolvedCredits?
+
+    private struct ContributorKey: Hashable {
+        let makerName: String?
+        let makerURL: String?
+        let uploaderName: String?
+        let uploaderURL: String?
+        let showDetails: Bool
+    }
+
+    private struct ResolvedCredits {
+        let key: ContributorKey
+        let maker: String?
+        let uploader: String?
+    }
+
+    private var contributorKey: ContributorKey {
+        ContributorKey(makerName: nonEmpty(lyrics.makerName), makerURL: lyrics.makerUrl,
+                       uploaderName: nonEmpty(lyrics.uploaderName), uploaderURL: lyrics.uploaderUrl, showDetails: showDetails)
+    }
+
+    private var creditsReady: Bool {
+        !showDetails || (contributorKey.makerName == nil && contributorKey.uploaderName == nil)
+            || resolvedCredits?.key == contributorKey
+    }
+
+    private func resolveName(_ name: String?, link: String?) async -> String? {
+        guard let name else { return nil }
+        let profile = await KaraokeProfileResolver.shared.identity(profileURL: link)
+        return profile?.creditName(preserving: name) ?? name
+    }
 
     private var providerLabel: String? {
         nonEmpty(lyrics.providerName) ?? nonEmpty(lyrics.providerCode).map { _ in SpicyLyricsRepository.providerName }
@@ -42,10 +73,10 @@ struct KaraokeCreditsFooterView: View {
                         .foregroundColor(.white.opacity(unfaded ? 1 : 0.5))
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                if let maker = nonEmpty(lyrics.makerName) {
+                if let maker = (resolvedCredits?.key == contributorKey ? resolvedCredits?.maker : contributorKey.makerName) {
                     profile("lyrics_made_by".localized, name: maker, link: lyrics.makerUrl, avatar: lyrics.makerAvatarUrl)
                 }
-                if let uploader = nonEmpty(lyrics.uploaderName) {
+                if let uploader = (resolvedCredits?.key == contributorKey ? resolvedCredits?.uploader : contributorKey.uploaderName) {
                     profile(nonEmpty(lyrics.makerName) == nil ? "lyrics_made_by".localized : "lyrics_uploaded_by".localized,
                             name: uploader, link: lyrics.uploaderUrl, avatar: lyrics.uploaderAvatarUrl)
                 }
@@ -59,6 +90,20 @@ struct KaraokeCreditsFooterView: View {
         .padding(.horizontal, 20)
         .padding(.top, 8)
         .padding(.bottom, bottomPadding)
+        .opacity(creditsReady ? 1 : 0)
+        .allowsHitTesting(creditsReady)
+        .accessibilityHidden(!creditsReady)
+        .task(id: contributorKey) {
+            let key = contributorKey
+            guard key.showDetails else { return }
+            async let maker = resolveName(key.makerName, link: key.makerURL)
+            async let uploader = resolveName(key.uploaderName, link: key.uploaderURL)
+            let names = await (maker, uploader)
+            guard !Task.isCancelled else { return }
+            withAnimation(.timingCurve(0.22, 1, 0.36, 1, duration: 0.18)) {
+                resolvedCredits = ResolvedCredits(key: key, maker: names.0, uploader: names.1)
+            }
+        }
     }
 }
 
@@ -69,7 +114,6 @@ private struct KaraokeContributorCredit: View {
     let name: String
     let link: String?
     let avatar: String?
-    @State private var resolvedName: String?
 
     private func remoteURL(_ value: String?) -> URL? {
         guard let value, let url = URL(string: value.hasPrefix("//") ? "https:" + value : value),
@@ -78,7 +122,7 @@ private struct KaraokeContributorCredit: View {
     }
 
     var body: some View {
-        let currentName = resolvedName ?? name
+        let currentName = name
         let username = currentName.hasPrefix("@") ? currentName : "@" + currentName
         HStack(alignment: .firstTextBaseline, spacing: 5) {
             Text(label).foregroundColor(.white.opacity(0.5))
@@ -98,9 +142,5 @@ private struct KaraokeContributorCredit: View {
             }
         }
         .font(.system(size: 19.5, weight: .semibold))
-        .task(id: link) {
-            let updated = await KaraokeProfileResolver.shared.username(profileURL: link)
-            if !Task.isCancelled { resolvedName = updated }
-        }
     }
 }

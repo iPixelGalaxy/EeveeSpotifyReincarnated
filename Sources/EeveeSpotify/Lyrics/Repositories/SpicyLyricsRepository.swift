@@ -18,12 +18,10 @@ class SpicyLyricsRepository: LyricsRepository {
     private static let apiUrl = "https://api.spicylyrics.org/v1/lyrics/"
 
     private static func profileName(_ profile: SpicyLyricsJSON?) -> String? {
-        for key in ["username", "displayName", "display_name", "globalName", "global_name"] {
-            if let value = profile?[key]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty {
-                return value
-            }
-        }
-        return nil
+        let displayName = ["displayName", "display_name", "globalName", "global_name"].lazy.compactMap {
+            LyricsContributorIdentity.nonEmpty(profile?[$0]?.stringValue)
+        }.first
+        return LyricsContributorIdentity.preferredName(username: profile?["username"]?.stringValue, displayName: displayName)
     }
 
     private static func profileURL(_ profile: SpicyLyricsJSON?) -> String? {
