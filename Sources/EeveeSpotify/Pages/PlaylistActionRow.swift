@@ -10,7 +10,23 @@ final class PlaylistActionRow: UIView {
     }
     let curation = PlaylistCurationBar()
     var compactHeight: CGFloat { (followControl == nil ? 96 : 144) + (curation.hasSecondaryActions ? 52 : 0) }
-    weak var download: UIView?
+    weak var download: UIView? {
+        didSet {
+            guard download !== oldValue else { return }
+            downloadObservations.removeAll()
+            guard let download else { return }
+            let changed: () -> Void = { [weak self] in
+                DispatchQueue.main.async { [weak self] in self?.sync() }
+            }
+            downloadObservations = [
+                download.observe(\.accessibilityIdentifier, options: [.new]) { _, _ in changed() },
+                download.observe(\.accessibilityLabel, options: [.new]) { _, _ in changed() },
+                download.observe(\.accessibilityValue, options: [.new]) { _, _ in changed() },
+                download.observe(\.tintColor, options: [.new]) { _, _ in changed() }
+            ]
+        }
+    }
+    private var downloadObservations = [NSKeyValueObservation]()
     weak var shuffle: UIView?
     weak var play: UIView?
     weak var add: UIView?
@@ -126,6 +142,9 @@ final class PlaylistActionRow: UIView {
     private static let pauseImage = UIImage(systemName: "pause.fill", withConfiguration: UIImage.SymbolConfiguration(pointSize: 15, weight: .bold))
     private static let plusImage = UIImage(systemName: "plus", withConfiguration: UIImage.SymbolConfiguration(pointSize: 17, weight: .semibold))
     private static let checkImage = UIImage(systemName: "checkmark", withConfiguration: UIImage.SymbolConfiguration(pointSize: 17, weight: .semibold))
+    private static let downloadImage = UIImage(systemName: "arrow.down", withConfiguration: UIImage.SymbolConfiguration(pointSize: 17, weight: .semibold))
+    private static let downloadedImage = UIImage(systemName: "arrow.down.circle.fill", withConfiguration: UIImage.SymbolConfiguration(pointSize: 17, weight: .semibold))
+    private static let downloadingImage = UIImage(systemName: "arrow.down.circle.dotted", withConfiguration: UIImage.SymbolConfiguration(pointSize: 17, weight: .semibold))
     private static let playTitle = "playlist_play".localized
     private static let pauseTitle = "playlist_pause".localized
 
@@ -212,12 +231,16 @@ final class PlaylistActionRow: UIView {
             var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
             return $0.tintColor.getRed(&r, green: &g, blue: &b, alpha: &a) && a > 0.5 && g > r + 0.15 && g > b + 0.1
         }) != nil
-        let downloaded = selected || greenIcon || state.contains("remove") || (state.contains("downloaded") && !state.contains("not downloaded"))
+        let identifier = download?.accessibilityIdentifier ?? ""
+        let downloaded = identifier.hasSuffix(".Downloaded") || selected || greenIcon || state.contains("remove") || (state.contains("downloaded") && !state.contains("not downloaded"))
+        let downloading = !downloaded && identifier.hasSuffix(".Downloading")
         var downloadConfig = downloadButton.configuration
-        downloadConfig?.baseForegroundColor = downloaded ? Theme.accent : .white
+        downloadConfig?.image = downloaded ? Self.downloadedImage : downloading ? Self.downloadingImage : Self.downloadImage
+        downloadConfig?.baseForegroundColor = downloaded ? UIColor(red: 25.0 / 255, green: 181.0 / 255, blue: 81.0 / 255, alpha: 1) : .white
         if downloadButton.configuration != downloadConfig { downloadButton.configuration = downloadConfig }
         downloadButton.accessibilityLabel = download?.accessibilityLabel
-        downloadButton.accessibilityValue = download?.accessibilityValue
+        downloadButton.accessibilityValue = downloaded ? "Downloaded" : downloading ? "Downloading" : download?.accessibilityValue
+        downloadButton.accessibilityTraits = downloaded ? [.button, .selected] : .button
         if addButton.isHidden != (add == nil) {
             addButton.isHidden = add == nil
             setNeedsLayout()

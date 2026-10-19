@@ -225,6 +225,8 @@ extension GlassPlaylist {
         row.explore = explore
         row.followControl = follow
         row.download = controls.eeveeFirst(UIView.self) {
+            ($0.accessibilityIdentifier ?? "").hasPrefix("DownloadButton.Granular.")
+        } ?? controls.eeveeFirst(UIView.self) {
             let identity = (($0.accessibilityIdentifier ?? "") + " " + ($0.accessibilityLabel ?? "")).lowercased()
             return identity.contains("download") && ($0 is UIControl || $0.gestureRecognizers?.isEmpty == false)
         }
@@ -389,7 +391,8 @@ enum PlaylistListPaint {
     }
 
     static func clear(_ list: UIScrollView) {
-        if list.backgroundColor != .black { list.backgroundColor = .black }
+        let background: UIColor = LandscapePlaylistHeader.isLandscape(list) ? UIColor(white: 18.0 / 255, alpha: 1) : .black
+        if list.backgroundColor != background { list.backgroundColor = background }
         let dividers = GlassPlaylist.options.dividers
         for cell in list.subviews {
             let content = cellContent(of: cell)

@@ -13,6 +13,7 @@ enum LandscapeNavigation {
     private static var lastWindowSize: CGSize?
     private static weak var surface: UIView?
     private static var surfaceRadius: CGFloat = 0
+    private static var surfaceClips = false
     private static var updating = false
     private static weak var insetOwner: UIViewController?
     private static var originalRightInset: CGFloat = 0
@@ -38,21 +39,24 @@ enum LandscapeNavigation {
 
     static func layoutContentSurface(in host: UIView) {
         guard let window = host.window,
-              let canvas = host.subviews.first(where: { child in
-                  child.subviews.contains(where: { $0.accessibilityIdentifier == "barViewController container" })
+              let canvas = host.subviews.first(where: {
+                  $0.bounds.width >= host.bounds.width * 0.8 && $0.bounds.height >= host.bounds.height * 0.8
               }) else { return }
         if window.bounds.width > window.bounds.height {
             guard canvas.transform.isIdentity else { return }
             if surface !== canvas {
                 surface?.layer.cornerRadius = surfaceRadius
                 surface = canvas; surfaceRadius = canvas.layer.cornerRadius
+                surfaceClips = canvas.clipsToBounds
             }
             // Expand Spotify's inset canvas, retaining UIKit's root geometry and native constraints.
             let frame = host.convert(window.bounds, from: window)
             if canvas.frame != frame { canvas.frame = frame }
             canvas.layer.cornerRadius = 0
+            canvas.clipsToBounds = false
         } else if surface === canvas {
             canvas.layer.cornerRadius = surfaceRadius
+            canvas.clipsToBounds = surfaceClips
             surface = nil
         }
     }
@@ -160,6 +164,14 @@ enum LandscapeNavigation {
 
     static func contentBottom(in window: UIWindow) -> CGFloat {
         (frames(window)?.player.minY ?? window.safeAreaLayoutGuide.layoutFrame.maxY - 64) - 12
+    }
+
+    static func swipeStartRegion(in window: UIWindow) -> CGRect {
+        let bottom = playerCard.flatMap { card in
+            card.window === window ? card.convert(card.bounds, to: window).maxY : nil
+        } ?? window.safeAreaLayoutGuide.layoutFrame.maxY
+        let height = window.bounds.height * 0.05
+        return CGRect(x: window.bounds.minX, y: bottom - height, width: window.bounds.width, height: height)
     }
 
     static func contentRight(in window: UIWindow) -> CGFloat {

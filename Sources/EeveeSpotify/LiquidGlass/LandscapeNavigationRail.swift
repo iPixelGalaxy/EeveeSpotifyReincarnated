@@ -1,134 +1,160 @@
 import UIKit
 
+/// A native segmented control supplies the system's tracking, refraction and spring animation.
 @available(iOS 26.0, *)
 final class LandscapeNavigationRail: UIView {
+    private final class Segments: UISegmentedControl {
+        var hover: ((Int) -> Void)?
+        var finish: (() -> Void)?
+        private func preview(_ touch: UITouch) {
+            guard numberOfSegments > 0 else { return }
+            let x = touch.location(in: self).x
+            hover?(min(numberOfSegments - 1, max(0, Int(x / max(1, bounds.width) * CGFloat(numberOfSegments)))))
+        }
+        override func beginTracking(_ touch: UITouch, with event: UIEvent?) -> Bool {
+            let tracking = super.beginTracking(touch, with: event)
+            if tracking { preview(touch) }
+            return tracking
+        }
+        override func continueTracking(_ touch: UITouch, with event: UIEvent?) -> Bool {
+            let tracking = super.continueTracking(touch, with: event)
+            if tracking { preview(touch) }
+            return tracking
+        }
+        override func endTracking(_ touch: UITouch?, with event: UIEvent?) {
+            super.endTracking(touch, with: event)
+            finish?()
+        }
+        override func cancelTracking(with event: UIEvent?) {
+            super.cancelTracking(with: event)
+            hover?(selectedSegmentIndex)
+        }
+    }
+    private final class TabAccessibility: UIAccessibilityElement {
+        weak var rail: LandscapeNavigationRail?
+        let index: Int
+        init(rail: LandscapeNavigationRail, index: Int) {
+            self.rail = rail; self.index = index
+            super.init(accessibilityContainer: rail)
+        }
+        override func accessibilityActivate() -> Bool { rail?.commit(index) ?? false }
+    }
     private weak var model: GlassSystemTabBar?
-    private let glass = UIVisualEffectView(effect: UIGlassEffect(style: .regular))
-    private let selection: UIVisualEffectView = {
-        let effect = UIGlassEffect(style: .clear)
-        effect.isInteractive = true
-        let view = UIVisualEffectView(effect: effect)
-        view.isUserInteractionEnabled = false
-        view.cornerConfiguration = .capsule()
-        return view
-    }()
-    private var buttons = [UIButton]()
-    private var selectedIndex = 0
-    private var dragging = false
-    private var rendered = [Item]()
-    private var renderedTint: UIColor?
+    private let segments = Segments(items: nil)
+    private var items = [Item]()
+    private var tint = UIColor.systemGreen
+    private var previewIndex = 0
+    private var imageSize = CGSize.zero
     private struct Item: Equatable {
         let title: String?
         let image: UIImage?
-        let selected: Bool
+        let selectedImage: UIImage?
         static func == (lhs: Item, rhs: Item) -> Bool {
-            lhs.title == rhs.title && lhs.image === rhs.image && lhs.selected == rhs.selected
+            lhs.title == rhs.title && lhs.image === rhs.image && lhs.selectedImage === rhs.selectedImage
         }
     }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        glass.cornerConfiguration = .capsule()
-        glass.isUserInteractionEnabled = false
-        addSubview(glass)
-        addSubview(selection)
-        addGestureRecognizer(UIPanGestureRecognizer(target: self, action: #selector(dragSelection(_:))))
+        segments.transform = CGAffineTransform(rotationAngle: .pi / 2)
+        segments.accessibilityElementsHidden = true
+        segments.addTarget(self, action: #selector(selectionChanged), for: .valueChanged)
+        segments.hover = { [weak self] index in self?.preview(index) }
+        segments.finish = { [weak self] in
+            guard let self else { return }
+            _ = commit(segments.selectedSegmentIndex)
+        }
+        addSubview(segments)
     }
     required init?(coder: NSCoder) { nil }
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        glass.frame = bounds
-        let inner = bounds.insetBy(dx: 5, dy: 6)
-        let height = inner.height / CGFloat(max(1, buttons.count))
-        for (index, button) in buttons.enumerated() {
-            button.frame = CGRect(x: inner.minX, y: inner.minY + CGFloat(index) * height, width: inner.width, height: height)
+        let size = CGSize(width: bounds.height, height: bounds.width)
+        if segments.bounds.size != size { segments.bounds.size = size }
+        segments.center = CGPoint(x: bounds.midX, y: bounds.midY)
+        let nextSize = CGSize(width: max(1, bounds.width - 12), height: max(1, bounds.height / CGFloat(max(1, items.count)) - 8))
+        if imageSize != nextSize {
+            imageSize = nextSize
+            renderImages()
         }
-        if !dragging { moveSelection(to: selectedIndex, animated: false) }
+        if let elements = accessibilityElements as? [TabAccessibility] {
+            let height = bounds.height / CGFloat(max(1, items.count))
+            for element in elements { element.accessibilityFrameInContainerSpace = CGRect(x: 0, y: CGFloat(element.index) * height, width: bounds.width, height: height) }
+        }
     }
 
     func update(_ bar: GlassSystemTabBar) {
         model = bar
-        let items = bar.items ?? []
-        let next = items.map { item in
-            let selected = bar.selectedItem === item
-            return Item(title: item.title, image: selected ? item.selectedImage ?? item.image : item.image, selected: selected)
-        }
-        guard next != rendered || renderedTint != bar.tintColor else { return }
-        rendered = next; renderedTint = bar.tintColor
-        let previousIndex = selectedIndex
-        selectedIndex = items.firstIndex(where: { bar.selectedItem === $0 }) ?? 0
-        if buttons.count != items.count {
-            buttons.forEach { $0.removeFromSuperview() }
-            buttons = items.indices.map { index in
-                let button = UIButton(type: .system)
-                button.tag = index
-                button.addTarget(self, action: #selector(selectTab(_:)), for: .touchUpInside)
-                addSubview(button)
-                return button
-            }
+        let next = (bar.items ?? []).map { Item(title: $0.title, image: $0.image, selectedImage: $0.selectedImage) }
+        let selected = bar.items?.firstIndex(where: { $0 === bar.selectedItem }) ?? 0
+        let changed = items != next || tint != bar.tintColor
+        if items.count != next.count {
+            segments.removeAllSegments()
+            for index in next.indices { segments.insertSegment(with: UIImage(), at: index, animated: false) }
+            accessibilityElements = next.indices.map { TabAccessibility(rail: self, index: $0) }
             setNeedsLayout()
         }
-        for (button, item) in zip(buttons, items) {
-            let selected = bar.selectedItem === item
-            var configuration = UIButton.Configuration.plain()
-            configuration.title = item.title
-            configuration.image = selected ? item.selectedImage ?? item.image : item.image
-            configuration.imagePlacement = .top; configuration.imagePadding = 3
-            configuration.contentInsets = NSDirectionalEdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0)
-            configuration.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { attributes in
-                var attributes = attributes; attributes.font = .systemFont(ofSize: 10, weight: .medium); return attributes
+        items = next; tint = bar.tintColor
+        if !segments.isTracking {
+            let selectionChanged = segments.selectedSegmentIndex != selected
+            if selectionChanged { segments.selectedSegmentIndex = selected }
+            if changed || selectionChanged { previewIndex = selected; renderImages() }
+        } else if changed { renderImages() }
+        if let elements = accessibilityElements as? [TabAccessibility] {
+            for element in elements {
+                element.accessibilityLabel = items[element.index].title
+                element.accessibilityTraits = element.index == selected ? [.button, .selected] : .button
             }
-            configuration.baseForegroundColor = selected ? bar.tintColor : .white
-            configuration.background = .clear()
-            button.configuration = configuration
-            button.accessibilityLabel = item.title
-            button.accessibilityTraits = selected ? [.button, .selected] : .button
-        }
-        if !dragging { moveSelection(to: selectedIndex, animated: previousIndex != selectedIndex) }
-    }
-
-    private func moveSelection(to index: Int, animated: Bool) {
-        guard buttons.indices.contains(index) else { selection.isHidden = true; return }
-        selection.isHidden = false
-        let frame = buttons[index].frame.insetBy(dx: 1, dy: 3)
-        guard frame.width > 0, frame.height > 0 else { return }
-        if animated, !UIAccessibility.isReduceMotionEnabled {
-            UIView.animate(withDuration: 0.3, delay: 0, usingSpringWithDamping: 0.85, initialSpringVelocity: 0,
-                           options: [.beginFromCurrentState, .allowUserInteraction]) { self.selection.frame = frame }
-        } else { selection.frame = frame }
-    }
-
-    @objc private func dragSelection(_ gesture: UIPanGestureRecognizer) {
-        guard !buttons.isEmpty else { return }
-        let point = gesture.location(in: self)
-        let index = buttons.indices.min(by: { abs(buttons[$0].frame.midY - point.y) < abs(buttons[$1].frame.midY - point.y) }) ?? selectedIndex
-        switch gesture.state {
-        case .began, .changed:
-            dragging = true
-            selection.layer.removeAllAnimations()
-            let frame = buttons[index].frame.insetBy(dx: 1, dy: 3)
-            selection.bounds.size = frame.size
-            selection.center = CGPoint(x: frame.midX, y: min(buttons.last!.frame.midY, max(buttons[0].frame.midY, point.y)))
-        case .ended:
-            dragging = false
-            commit(index)
-            moveSelection(to: selectedIndex, animated: true)
-        case .cancelled, .failed:
-            dragging = false
-            moveSelection(to: selectedIndex, animated: true)
-        default: break
         }
     }
 
-    private func commit(_ index: Int) {
-        guard let model, let items = model.items, items.indices.contains(index) else { return }
+    private func preview(_ index: Int) {
+        guard items.indices.contains(index), previewIndex != index else { return }
+        let previous = previewIndex; previewIndex = index
+        for position in [previous, index] where items.indices.contains(position) { renderImage(at: position) }
+    }
+
+    private func renderImages() {
+        guard imageSize.width > 0, imageSize.height > 0 else { return }
+        for index in items.indices { renderImage(at: index) }
+    }
+
+    private func renderImage(at index: Int) {
+        guard imageSize.width > 0, imageSize.height > 0 else { return }
         let item = items[index]
-        guard model.selectedItem !== item else { return }
-        model.selectedItem = item
-        update(model)
-        model.tabBar(model, didSelect: item)
+        let selected = index == previewIndex
+        let color: UIColor = selected ? tint : .white
+        let symbol = selected ? item.selectedImage ?? item.image : item.image
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: imageSize.height, height: imageSize.width))
+        let image = renderer.image { context in
+            let drawing = context.cgContext
+            drawing.translateBy(x: imageSize.height / 2, y: imageSize.width / 2)
+            drawing.rotate(by: -.pi / 2)
+            drawing.translateBy(x: -imageSize.width / 2, y: -imageSize.height / 2)
+            let icon: CGFloat = 23
+            let top = max(0, (imageSize.height - icon - 18) / 2)
+            symbol?.withTintColor(color, renderingMode: .alwaysOriginal).draw(in: CGRect(x: (imageSize.width - icon) / 2, y: top, width: icon, height: icon))
+            if let title = item.title {
+                let paragraph = NSMutableParagraphStyle(); paragraph.alignment = .center; paragraph.lineBreakMode = .byTruncatingTail
+                (title as NSString).draw(in: CGRect(x: 0, y: top + icon + 4, width: imageSize.width, height: 16),
+                                         withAttributes: [.font: UIFont.systemFont(ofSize: 10, weight: .medium), .foregroundColor: color, .paragraphStyle: paragraph])
+            }
+        }
+        segments.setImage(image.withRenderingMode(.alwaysOriginal), forSegmentAt: index)
     }
 
-    @objc private func selectTab(_ sender: UIButton) { commit(sender.tag) }
+    @discardableResult private func commit(_ index: Int) -> Bool {
+        guard let model, let tabs = model.items, tabs.indices.contains(index) else { return false }
+        if model.selectedItem !== tabs[index] {
+            model.selectedItem = tabs[index]
+            model.tabBar(model, didSelect: tabs[index])
+        }
+        update(model)
+        return true
+    }
+
+    @objc private func selectionChanged() {
+        if !segments.isTracking { _ = commit(segments.selectedSegmentIndex) }
+    }
 }
