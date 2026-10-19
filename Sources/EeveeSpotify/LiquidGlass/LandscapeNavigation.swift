@@ -8,6 +8,9 @@ enum LandscapeNavigation {
     private static weak var playerCard: UIView?
     private static var player: NativeViewPlacement?
     private static var rail: LandscapeNavigationRail?
+    private static weak var playlist: UIView?
+    private static var fullscreen: NativeViewPlacement?
+    private static var rootRadius: CGFloat = 0
     private static var updating = false
     private static weak var insetOwner: UIViewController?
     private static var originalRightInset: CGFloat = 0
@@ -17,13 +20,29 @@ enum LandscapeNavigation {
     private static func frames(_ window: UIWindow) -> (rail: CGRect, player: CGRect)? {
         guard window.bounds.width > window.bounds.height else { return nil }
         let safe = window.safeAreaLayoutGuide.layoutFrame
-        let player = CGRect(x: 16, y: safe.maxY - 66, width: window.bounds.width - 32, height: 64)
-        let top = safe.minY + 64
-        let bottom = player.minY - 12
-        let count = max(1, bar?.items?.count ?? 4)
-        let height = min(CGFloat(count * 60 + 8), max(56, bottom - top))
-        let rail = CGRect(x: safe.maxX - 84, y: top + (bottom - top - height) / 2, width: 76, height: height)
+        let gap = max(8, (window.safeAreaInsets.right + 8) / 2)
+        let rail = CGRect(x: window.bounds.maxX - gap - 64, y: 8, width: 64, height: window.bounds.height - 16)
+        let dockRight = rail.minX - 12
+        let inPlaylist = playlist?.window === window
+        let left: CGFloat = inPlaylist ? 72 : 24
+        let right = dockRight - (inPlaylist ? 56 : 0)
+        let player = CGRect(x: left, y: safe.maxY - 50, width: max(140, right - left), height: 48)
         return (rail, player)
+    }
+
+    static func setPlaylist(_ root: UIView, visible: Bool) {
+        let changed = visible ? playlist !== root : playlist === root
+        if visible { playlist = root }
+        else if playlist === root { playlist = nil }
+        guard changed else { return }
+        if let playerHost, let playerCard { layoutPlayer(in: playerHost, card: playerCard) }
+        GlassNowPlayingBar.refreshLayout()
+    }
+
+    static func playlistDock(in window: UIWindow) -> (back: CGRect, more: CGRect)? {
+        guard playlist?.window === window, let layout = frames(window) else { return nil }
+        return (CGRect(x: 16, y: layout.player.minY, width: 48, height: 48),
+                CGRect(x: layout.player.maxX + 8, y: layout.player.minY, width: 48, height: 48))
     }
 
     private static func overflow(_ root: UIView) {
@@ -47,6 +66,14 @@ enum LandscapeNavigation {
         self.stock = stock; self.bar = bar
         guard let layout = frames(window), let owner = window.rootViewController,
               let host = owner.viewIfLoaded else { restore(); return }
+        if fullscreen?.view !== host {
+            fullscreen?.restore()
+            rootRadius = host.layer.cornerRadius
+            fullscreen = NativeViewPlacement(host)
+        }
+        fullscreen?.place(window.bounds, in: window)
+        host.layer.cornerRadius = 0
+        overflow(host)
         if insetOwner !== owner {
             restoreContentInset()
             insetOwner = owner; originalRightInset = owner.additionalSafeAreaInsets.right
@@ -96,6 +123,8 @@ enum LandscapeNavigation {
 
     private static func restore() {
         restoreContentInset()
+        fullscreen?.view?.layer.cornerRadius = rootRadius
+        fullscreen?.restore(); fullscreen = nil
         player?.restore(); player = nil
         rail?.removeFromSuperview(); rail = nil
         bar?.alpha = 1; bar?.isUserInteractionEnabled = true

@@ -5,6 +5,9 @@ import UIKit
 @available(iOS 26.0, *)
 final class PlaylistActionRow: UIView {
     static weak var current: PlaylistActionRow?
+    var compactLayout = false
+    var compactHeight: CGFloat { followControl == nil ? 96 : 144 }
+    weak var download: UIView?
     weak var shuffle: UIView?
     weak var play: UIView?
     weak var add: UIView?
@@ -27,6 +30,7 @@ final class PlaylistActionRow: UIView {
     }
 
     func place() {
+        guard !compactLayout else { alpha = 1; return }
         guard let host = superview, host.window != nil else { return }
         if let anchor, anchor.window != nil, anchor.bounds.height > 0 {
             let frame = anchor.convert(anchor.bounds, to: host)
@@ -54,6 +58,7 @@ final class PlaylistActionRow: UIView {
         return false
     }
 
+    private let downloadButton = PlaylistActionRow.circle("arrow.down")
     private let shuffleButton = PlaylistActionRow.circle("shuffle")
     private let shuffleDot: UIView = {
         let dot = UIView(frame: CGRect(x: 0, y: 0, width: 4, height: 4))
@@ -111,7 +116,9 @@ final class PlaylistActionRow: UIView {
     override init(frame: CGRect) {
         super.init(frame: frame)
         overrideUserInterfaceStyle = .dark
-        [shuffleButton, playButton, addButton, shareButton, followButton].forEach(addSubview)
+        [downloadButton, shuffleButton, playButton, addButton, shareButton, followButton].forEach(addSubview)
+        downloadButton.isHidden = true
+        downloadButton.addAction(UIAction { [weak self] _ in self?.forward(self?.download, "download") }, for: .primaryActionTriggered)
         shuffleButton.addSubview(shuffleDot)
         shuffleButton.addAction(UIAction { [weak self] _ in self?.forward(self?.shuffle, "shuffle") }, for: .primaryActionTriggered)
         playButton.addAction(UIAction { [weak self] _ in self?.forward(self?.play, "play") }, for: .primaryActionTriggered)
@@ -129,6 +136,19 @@ final class PlaylistActionRow: UIView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
+        if compactLayout {
+            playButton.frame = CGRect(x: 0, y: 0, width: bounds.width, height: 44)
+            let circles = [downloadButton, shuffleButton, addButton, shareButton].filter { !$0.isHidden }
+            let side: CGFloat = 44
+            let gap = max(0, min(8, (bounds.width - CGFloat(circles.count) * side) / CGFloat(max(1, circles.count - 1))))
+            var x = (bounds.width - CGFloat(circles.count) * side - CGFloat(max(0, circles.count - 1)) * gap) / 2
+            for button in circles {
+                button.frame = CGRect(x: x, y: 52, width: side, height: side); x += side + gap
+            }
+            shuffleDot.center = CGPoint(x: side / 2, y: side - 7)
+            followButton.frame = CGRect(x: 0, y: 104, width: bounds.width, height: 40)
+            return
+        }
         let side: CGFloat = 48, gap: CGFloat = 12
         let y = (bounds.height - side) / 2
         var playWidth: CGFloat = 140
@@ -156,6 +176,8 @@ final class PlaylistActionRow: UIView {
     }
 
     func sync() {
+        downloadButton.isHidden = !compactLayout || download == nil
+        downloadButton.tintColor = download?.accessibilityLabel?.lowercased().contains("remove") == true ? Theme.accent : .white
         if addButton.isHidden != (add == nil) {
             addButton.isHidden = add == nil
             setNeedsLayout()

@@ -214,7 +214,6 @@ extension GlassPlaylist {
             objc_setAssociatedObject(host, &rowKey, row, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
             return row
         }()
-        if row.superview !== host || host.subviews.last !== row { host.addSubview(row) }
         row.shuffle = shuffle
         row.play = play
         row.add = add
@@ -224,6 +223,8 @@ extension GlassPlaylist {
         row.anchor = add ?? shuffle
         row.playHolder = holder(of: play)
         row.controlsRow = wideAncestor(of: shuffle, below: host)
+        let sidebar = LandscapePlaylistHeader.hostActions(row, in: host, header: controls)
+        if !sidebar && (row.superview !== host || host.subviews.last !== row) { host.addSubview(row) }
         row.place()
         row.sync()
         var ancestor = host.superview

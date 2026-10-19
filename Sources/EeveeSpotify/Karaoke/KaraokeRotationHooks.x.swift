@@ -41,6 +41,7 @@ class LandscapePlayerHitRegionHook: ClassHook<UIView> {
     typealias Group = KaraokeGlobalRotationGroup
     @objc(pointInside:withEvent:) func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
         if #available(iOS 26.0, *), let allowed = LandscapeNavigation.pointInside(target, point: point) { return allowed }
+        if #available(iOS 26.0, *), let allowed = LandscapePlaylistHeader.pointInside(target) { return allowed }
         return orig.point(inside: point, with: event)
     }
 }

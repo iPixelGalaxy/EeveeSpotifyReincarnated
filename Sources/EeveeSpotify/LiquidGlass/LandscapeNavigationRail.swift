@@ -21,11 +21,14 @@ final class LandscapeNavigationRail: UIView {
     override init(frame: CGRect) {
         super.init(frame: frame)
         let glass = GlassKit.pane(in: self)
+        let effect = UIGlassEffect(style: .clear)
+        effect.isInteractive = true
+        glass.effect = effect
         glass.cornerConfiguration = .capsule()
         scroll.showsVerticalScrollIndicator = false
         scroll.alwaysBounceVertical = false
         addSubview(scroll)
-        stack.axis = .vertical; stack.spacing = 4
+        stack.axis = .vertical; stack.spacing = 4; stack.distribution = .fillEqually
         stack.translatesAutoresizingMaskIntoConstraints = false
         scroll.addSubview(stack)
         NSLayoutConstraint.activate([
@@ -33,7 +36,8 @@ final class LandscapeNavigationRail: UIView {
             stack.trailingAnchor.constraint(equalTo: scroll.contentLayoutGuide.trailingAnchor),
             stack.topAnchor.constraint(equalTo: scroll.contentLayoutGuide.topAnchor),
             stack.bottomAnchor.constraint(equalTo: scroll.contentLayoutGuide.bottomAnchor),
-            stack.widthAnchor.constraint(equalTo: scroll.frameLayoutGuide.widthAnchor)
+            stack.widthAnchor.constraint(equalTo: scroll.frameLayoutGuide.widthAnchor),
+            stack.heightAnchor.constraint(greaterThanOrEqualTo: scroll.frameLayoutGuide.heightAnchor)
         ])
     }
     required init?(coder: NSCoder) { nil }
@@ -58,7 +62,7 @@ final class LandscapeNavigationRail: UIView {
             buttons = items.indices.map { index in
                 let button = UIButton(type: .system)
                 button.tag = index
-                button.heightAnchor.constraint(equalToConstant: 56).isActive = true
+                button.heightAnchor.constraint(greaterThanOrEqualToConstant: 56).isActive = true
                 button.addTarget(self, action: #selector(selectTab(_:)), for: .touchUpInside)
                 stack.addArrangedSubview(button)
                 return button
@@ -66,7 +70,8 @@ final class LandscapeNavigationRail: UIView {
         }
         for (button, item) in zip(buttons, items) {
             let selected = bar.selectedItem === item
-            var configuration = UIButton.Configuration.plain()
+            var configuration = UIButton.Configuration.glass()
+            configuration.cornerStyle = .capsule
             configuration.title = item.title
             configuration.image = selected ? item.selectedImage ?? item.image : item.image
             configuration.imagePlacement = .top; configuration.imagePadding = 3
@@ -75,9 +80,7 @@ final class LandscapeNavigationRail: UIView {
                 var attributes = attributes; attributes.font = .systemFont(ofSize: 11, weight: .medium); return attributes
             }
             configuration.baseForegroundColor = selected ? bar.tintColor : .white
-            configuration.background = .clear()
-            configuration.background.backgroundColor = selected ? UIColor.black.withAlphaComponent(0.3) : .clear
-            configuration.background.cornerRadius = 20
+            configuration.baseBackgroundColor = selected ? bar.tintColor.withAlphaComponent(0.15) : .clear
             button.configuration = configuration
             button.accessibilityLabel = item.title
             button.accessibilityTraits = selected ? [.button, .selected] : .button
