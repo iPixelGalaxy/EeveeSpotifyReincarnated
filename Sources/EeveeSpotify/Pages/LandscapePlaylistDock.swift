@@ -1,62 +1,70 @@
+import EeveeSpotifyC
 import UIKit
 
 @available(iOS 26.0, *)
 final class LandscapePlaylistDock {
     private(set) weak var bar: UINavigationBar?
-    var hasControls: Bool { back?.view != nil || more?.view != nil }
-    private var back: NativeViewPlacement?
-    private var more: NativeViewPlacement?
-    private struct Saved { weak var view: UIView?; let alpha: CGFloat; let clips: Bool }
-    private var saved: [ObjectIdentifier: Saved] = [:]
+    private weak var navigation: UINavigationController?
+    private var barAlpha: CGFloat = 1
+    private weak var menuSource: UIView?
+    private weak var menuItem: UIBarButtonItem?
+    private let back = LandscapePlaylistDock.button("chevron.left", label: "Back")
+    private let more = LandscapePlaylistDock.button("ellipsis", label: "More options")
+    var hasControls: Bool { back.superview != nil }
 
-    private func remember(_ view: UIView) {
-        let key = ObjectIdentifier(view)
-        if saved[key]?.view !== view { saved[key] = Saved(view: view, alpha: view.alpha, clips: view.clipsToBounds) }
+    private static func button(_ symbol: String, label: String) -> UIButton {
+        var configuration = UIButton.Configuration.glass()
+        configuration.cornerStyle = .capsule
+        configuration.baseForegroundColor = .white
+        configuration.image = UIImage(systemName: symbol, withConfiguration: UIImage.SymbolConfiguration(pointSize: 19, weight: .semibold))
+        let button = UIButton(configuration: configuration)
+        button.accessibilityLabel = label
+        return button
     }
 
-    func layout(_ controller: UIViewController, in window: UIWindow) {
+    init() {
+        back.addAction(UIAction { [weak self] _ in self?.navigation?.popViewController(animated: true) }, for: .primaryActionTriggered)
+        more.addAction(UIAction { [weak self] _ in self?.openMenu() }, for: .primaryActionTriggered)
+    }
+
+    private func openMenu() {
+        if let source = menuSource {
+            let control = (source as? UIControl) ?? source.eeveeFirst(UIControl.self)
+            _ = EeveeFireTap(control ?? source)
+        } else if let item = menuItem, let action = item.action {
+            UIApplication.shared.sendAction(action, to: item.target, from: item, for: nil)
+        }
+    }
+
+    func layout(_ controller: UIViewController, in window: UIWindow, host: UIView) {
         guard let frames = LandscapeNavigation.playlistDock(in: window),
-              let navigation = controller.navigationController?.navigationBar,
-              navigation.window === window, !navigation.isHidden else { return }
-        if bar !== navigation { restore(); bar = navigation }
-        if back?.view?.isDescendant(of: navigation) != true || more?.view?.isDescendant(of: navigation) != true {
-            let controls = GlassPlaylist.collect(UIControl.self, in: navigation).filter {
-                !$0.isHidden && $0.bounds.width >= 24 && $0.bounds.height >= 24 && $0.bounds.width < window.bounds.width * 0.3
-            }.sorted { $0.convert($0.bounds, to: window).midX < $1.convert($1.bounds, to: window).midX }
-            if let first = controls.first, first.convert(first.bounds, to: navigation).midX < navigation.bounds.midX,
-               back?.view !== first { back?.restore(); back = NativeViewPlacement(first) }
-            if let last = controls.last, last !== back?.view,
-               last.convert(last.bounds, to: navigation).midX > navigation.bounds.midX,
-               more?.view !== last { more?.restore(); more = NativeViewPlacement(last) }
-        }
-        let kept = [back?.view, more?.view].compactMap { $0 }
-        guard !kept.isEmpty else { return }
-        func clear(_ view: UIView) {
-            guard !kept.contains(where: { $0 === view }) else { return }
-            remember(view)
-            if kept.contains(where: { $0.isDescendant(of: view) }) {
-                view.clipsToBounds = false
-                view.subviews.forEach(clear)
-            } else { view.alpha = 0 }
-        }
-        remember(navigation); navigation.clipsToBounds = false
-        navigation.subviews.forEach(clear)
-        back?.place(frames.back, in: window)
-        more?.place(frames.more, in: window)
+              let navigation = controller.navigationController,
+              navigation.navigationBar.window === window else { return }
+        let sourceBar = navigation.navigationBar
+        if bar !== sourceBar { restore(); bar = sourceBar; barAlpha = sourceBar.alpha }
+        self.navigation = navigation
+        menuItem = sourceBar.topItem?.rightBarButtonItems?.first
+        menuSource = menuItem?.customView
+        // Native bar-button wrappers clip relocated children even with clipsToBounds disabled.
+        // Keep their actions in place; host the visible glass controls alongside the player.
+        sourceBar.alpha = 0
+        for button in [back, more] where button.superview !== host { host.addSubview(button) }
+        back.frame = host.convert(frames.back, from: window)
+        more.frame = host.convert(frames.more, from: window)
+        more.isEnabled = menuSource != nil || menuItem?.action != nil
     }
 
     func hit(at point: CGPoint, in window: UIWindow, event: UIEvent?) -> UIView? {
         guard let frames = LandscapeNavigation.playlistDock(in: window) else { return nil }
-        for (placement, region) in [(back, frames.back), (more, frames.more)] {
-            if let view = placement?.view,
-               let hit = NativeHitRouter.hit(view, at: point, in: window, event: event, region: region) { return hit }
+        for (view, region) in [(back, frames.back), (more, frames.more)] {
+            if let hit = NativeHitRouter.hit(view, at: point, in: window, event: event, region: region) { return hit }
         }
         return nil
     }
 
     func restore() {
-        back?.restore(); more?.restore(); back = nil; more = nil
-        for state in saved.values { state.view?.alpha = state.alpha; state.view?.clipsToBounds = state.clips }
-        saved.removeAll(); bar = nil
+        bar?.alpha = barAlpha
+        back.removeFromSuperview(); more.removeFromSuperview()
+        bar = nil; navigation = nil; menuSource = nil; menuItem = nil
     }
 }

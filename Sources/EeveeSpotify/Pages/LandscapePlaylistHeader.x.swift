@@ -29,13 +29,16 @@ enum LandscapePlaylistHeader {
         let indicators: UIEdgeInsets
         let adjustment: UIScrollView.ContentInsetAdjustmentBehavior
         let clips: Bool
+        let background: UIColor?
+        private weak var nativeHeader: UIView?
+        private var headerAlpha: CGFloat = 1
         var visible = true
         init(root: UIView, list: UIScrollView) {
             self.root = root; scroll = list; viewport = NativeViewPlacement(root)
             self.list = root === list ? nil : NativeViewPlacement(list)
             inset = list.contentInset; indicators = list.verticalScrollIndicatorInsets
             adjustment = list.contentInsetAdjustmentBehavior
-            clips = root.clipsToBounds
+            clips = root.clipsToBounds; background = list.backgroundColor
             cover.contentMode = .scaleAspectFill; cover.clipsToBounds = true
             cover.layer.cornerRadius = 10; cover.layer.cornerCurve = .continuous
             cover.isAccessibilityElement = true; cover.accessibilityTraits = .image
@@ -76,6 +79,8 @@ enum LandscapePlaylistHeader {
             let offset = scroll?.contentOffset
             list?.restore(); viewport.restore()
             root?.clipsToBounds = clips
+            nativeHeader?.alpha = headerAlpha
+            scroll?.backgroundColor = background
             (root?.next as? UIViewController)?.traitOverrides.remove(UITraitVerticalSizeClass.self)
             (root?.next as? UIViewController)?.traitOverrides.remove(UITraitHorizontalSizeClass.self)
             if let scroll {
@@ -99,11 +104,19 @@ enum LandscapePlaylistHeader {
             sources.removeAll(); targets.removeAll()
         }
         func metadata(_ header: UIView) {
+            let hero = header.accessibilityIdentifier == "PL.Header" ? header
+                : PageLookup.ancestor(of: header, id: "PL.Header") ?? header
+            if nativeHeader !== hero {
+                nativeHeader?.alpha = headerAlpha
+                nativeHeader = hero; headerAlpha = hero.alpha
+            }
+            hero.alpha = 0
             let labels = GlassPlaylist.collect(UILabel.self, in: header).filter { !($0.text ?? "").isEmpty }
             guard let headline = labels.max(by: { $0.font.pointSize < $1.font.pointSize }) else { return }
             title.text = headline.text
             let details = labels.filter {
-                $0 !== headline && ($0.text?.count ?? 0) < 80 && $0.font.pointSize < headline.font.pointSize
+                $0 !== headline && (3..<80).contains($0.text?.trimmingCharacters(in: .whitespacesAndNewlines).count ?? 0)
+                    && $0.font.pointSize < headline.font.pointSize
                     && !["play", "pause", "shuffle", "follow"].contains($0.text?.lowercased() ?? "")
             }.sorted { $0.font.pointSize > $1.font.pointSize }
             var text = [String]()
@@ -128,7 +141,8 @@ enum LandscapePlaylistHeader {
             apply()
         }
         func apply() {
-            guard visible, let root, let parent = root.superview, let window = root.window, let scroll else { return }
+            guard visible, let root, let parent = root.superview, let window = root.window,
+                  window.bounds.width > window.bounds.height, let scroll else { return }
             LandscapeNavigation.setPlaylist(root, visible: true)
             let safe = window.safeAreaLayoutGuide.layoutFrame
             let top = max(8, safe.minY + 8)
@@ -141,6 +155,17 @@ enum LandscapePlaylistHeader {
             root.clipsToBounds = true
             list?.place(root.bounds, in: root)
             scroll.contentInsetAdjustmentBehavior = .never
+            // PL.Header is a sibling overlay, not a collection cell. Its old inset still reserves the entire hero.
+            let offset = scroll.contentOffset
+            var compactInsets = scroll.contentInset
+            compactInsets.top = 0; compactInsets.bottom = 0
+            if scroll.contentInset != compactInsets {
+                scroll.contentInset = compactInsets
+                scroll.verticalScrollIndicatorInsets = .zero
+                scroll.contentOffset = CGPoint(x: offset.x, y: max(0, offset.y))
+            }
+            nativeHeader?.alpha = 0
+            scroll.backgroundColor = root.backgroundColor
             if sidebar.superview !== parent { parent.addSubview(sidebar) }
             sidebar.frame = parent.convert(CGRect(x: left, y: top, width: width, height: column.height), from: window)
             cover.frame = CGRect(x: 0, y: 0, width: 125, height: 125)
@@ -150,7 +175,7 @@ enum LandscapePlaylistHeader {
             let actionY = summary.frame.maxY + 10
             if let actions { actions.frame = CGRect(x: 0, y: actionY, width: width, height: actions.compactHeight) }
             sidebar.contentSize = CGSize(width: width, height: actionY + (actions?.compactHeight ?? 0) + 8)
-            if let controller = root.next as? UIViewController { dock.layout(controller, in: window) }
+            if let controller = root.next as? UIViewController { dock.layout(controller, in: window, host: parent) }
 
         }
     }
@@ -212,6 +237,7 @@ enum LandscapePlaylistHeader {
             objc_setAssociatedObject(root, &pageKey, page, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
             pages.add(root)
         }
+        if let header { page.metadata(header) }
         if let artwork = header.flatMap({ PageLookup.find("Components.Header.UI.ArtworkImage", in: $0) }) {
             // The shadow texture is also a UIImageView. Prefer the actual square artwork.
             var candidates = [UIImageView]()

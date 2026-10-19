@@ -1,3 +1,4 @@
+import Orion
 import UIKit
 
 @available(iOS 26.0, *)
@@ -10,6 +11,8 @@ enum LandscapeNavigation {
     private static var rail: LandscapeNavigationRail?
     private static weak var playlist: UIView?
     private static var lastWindowSize: CGSize?
+    private static weak var surface: UIView?
+    private static var surfaceRadius: CGFloat = 0
     private static var updating = false
     private static weak var insetOwner: UIViewController?
     private static var originalRightInset: CGFloat = 0
@@ -20,13 +23,38 @@ enum LandscapeNavigation {
         guard window.bounds.width > window.bounds.height else { return nil }
         let safe = window.safeAreaLayoutGuide.layoutFrame
         let gap = max(8, (window.safeAreaInsets.right + 8) / 2)
-        let rail = CGRect(x: window.bounds.maxX - gap - 64, y: 8, width: 64, height: window.bounds.height - 16)
+        let nativeHeight = min(84, max(56, bar?.bounds.height ?? 76))
+        let width = nativeHeight * 1.5
+        let count = max(1, bar?.items?.count ?? 4)
+        let height = min(window.bounds.height - 16, CGFloat(count) * nativeHeight + CGFloat(count - 1) * 4 + 12)
+        let rail = CGRect(x: window.bounds.maxX - gap - width, y: (window.bounds.height - height) / 2, width: width, height: height)
         let dockRight = rail.minX - 12
         let inPlaylist = playlist?.window === window
         let left: CGFloat = inPlaylist ? 72 : 24
         let right = dockRight - (inPlaylist ? 56 : 0)
         let player = CGRect(x: left, y: safe.maxY - 50, width: max(140, right - left), height: 48)
         return (rail, player)
+    }
+
+    static func layoutContentSurface(in host: UIView) {
+        guard let window = host.window,
+              let canvas = host.subviews.first(where: { child in
+                  child.subviews.contains(where: { $0.accessibilityIdentifier == "barViewController container" })
+              }) else { return }
+        if window.bounds.width > window.bounds.height {
+            guard canvas.transform.isIdentity else { return }
+            if surface !== canvas {
+                surface?.layer.cornerRadius = surfaceRadius
+                surface = canvas; surfaceRadius = canvas.layer.cornerRadius
+            }
+            // Expand Spotify's inset canvas, retaining UIKit's root geometry and native constraints.
+            let frame = host.convert(window.bounds, from: window)
+            if canvas.frame != frame { canvas.frame = frame }
+            canvas.layer.cornerRadius = 0
+        } else if surface === canvas {
+            canvas.layer.cornerRadius = surfaceRadius
+            surface = nil
+        }
     }
 
     static func setPlaylist(_ root: UIView, visible: Bool) {
@@ -156,5 +184,15 @@ enum LandscapeNavigation {
             return NativeHitRouter.hit(card, at: point, in: window, event: event, region: layout.player)
         }
         return nil
+    }
+}
+
+class LandscapeContentSurfaceHook: ClassHook<UIView> {
+    typealias Group = GlassTabBarGroup
+    static let targetName = "_TtC19MainUI_TabBarUIImplP33_FD252D04A07ACEB7AD27A83269E8CFAF19TouchForwardingView"
+
+    func layoutSubviews() {
+        orig.layoutSubviews()
+        if #available(iOS 26.0, *) { LandscapeNavigation.layoutContentSurface(in: target) }
     }
 }

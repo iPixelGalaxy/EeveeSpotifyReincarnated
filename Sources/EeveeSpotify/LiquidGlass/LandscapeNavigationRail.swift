@@ -70,7 +70,7 @@ final class LandscapeNavigationRail: UIView {
         }
         for (button, item) in zip(buttons, items) {
             let selected = bar.selectedItem === item
-            var configuration = UIButton.Configuration.glass()
+            var configuration = selected ? UIButton.Configuration.glass() : UIButton.Configuration.plain()
             configuration.cornerStyle = .capsule
             configuration.title = item.title
             configuration.image = selected ? item.selectedImage ?? item.image : item.image
@@ -80,7 +80,8 @@ final class LandscapeNavigationRail: UIView {
                 var attributes = attributes; attributes.font = .systemFont(ofSize: 11, weight: .medium); return attributes
             }
             configuration.baseForegroundColor = selected ? bar.tintColor : .white
-            configuration.baseBackgroundColor = selected ? bar.tintColor.withAlphaComponent(0.15) : .clear
+            if selected { configuration.baseBackgroundColor = bar.tintColor.withAlphaComponent(0.15) }
+            else { configuration.background = .clear() }
             button.configuration = configuration
             button.accessibilityLabel = item.title
             button.accessibilityTraits = selected ? [.button, .selected] : .button

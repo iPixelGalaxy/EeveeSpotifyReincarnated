@@ -43,7 +43,8 @@ enum GlassPlaylist {
     }
 
     static func style(_ root: UIView) {
-        if root.backgroundColor != .black { root.backgroundColor = .black }
+        let background: UIColor = LandscapePlaylistHeader.isLandscape(root) ? UIColor(white: 18.0 / 255, alpha: 1) : .black
+        if root.backgroundColor != background { root.backgroundColor = background }
         let playlistHeader = header(in: root)
         LandscapePlaylistHeader.layoutPage(root, list: list(in: root), header: playlistHeader)
         guard let header = playlistHeader else { return }
