@@ -9,6 +9,13 @@ struct GlassTabBarGroup: HookGroup {}
 final class GlassSystemTabBar: UITabBar, UITabBarDelegate {
     weak var stock: UIView?
     var sources: [GlassTabSource] = []
+    var readinessAttempts = 0
+    var readinessScheduled = false
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        GlassTabBar.didLayoutSystemBar(self)
+    }
 
     func tabBar(_ tabBar: UITabBar, didSelect item: UITabBarItem) {
         guard let index = items?.firstIndex(of: item), index < sources.count else { return }
@@ -46,6 +53,8 @@ enum GlassTabBar {
     private static var launchTabApplied = false
     private static var filmKey: UInt8 = 0
     private static var platterLogged = false
+    private static var lastCapsuleFrame: CGRect?
+    private static var playerRefreshScheduled = false
     private static let tintObserver = NotificationCenter.default.addObserver(
         forName: .eeveeAlbumColorChanged, object: nil, queue: .main
     ) { _ in
@@ -74,11 +83,14 @@ enum GlassTabBar {
             bar.traitOverrides.remove(UITraitVerticalSizeClass.self)
             bar.traitOverrides.remove(UITraitHorizontalSizeClass.self)
         }
-        guard let row = tabRow(in: stock) else { return }
+        let frame = barFrame(in: stock)
+        if bar.frame != frame { bar.frame = frame }
+        guard stock.window != nil else { return }
+        guard let row = tabRow(in: stock) else { retryReadiness(stock, bar: bar); return }
         row.superview?.layoutIfNeeded()
 
         let tabs = row.arrangedSubviews.filter { !$0.isHidden && $0.bounds.width >= 20 }
-        guard !tabs.isEmpty else { return }
+        guard !tabs.isEmpty else { retryReadiness(stock, bar: bar); return }
         let labels = Dictionary(tabs.map { (ObjectIdentifier($0), label(in: $0)) }) { first, _ in first }
         func labelOf(_ tab: UIView) -> UILabel? { labels[ObjectIdentifier(tab)] ?? nil }
         func title(_ tab: UIView) -> String? { labelOf(tab)?.text }
@@ -142,10 +154,39 @@ enum GlassTabBar {
         applyLaunchTab(tabs, title: title, label: labelOf)
         applyTint(bar)
 
-        let frame = barFrame(in: stock)
-        if bar.frame != frame { bar.frame = frame }
         LandscapeNavigation.didLayoutBar(bar, in: stock)
+        didLayoutSystemBar(bar)
         if stock.subviews.last !== bar { stock.bringSubviewToFront(bar) }
+    }
+
+    private static func retryReadiness(_ stock: UIView, bar: GlassSystemTabBar) {
+        guard stock.window != nil, !bar.readinessScheduled, bar.readinessAttempts < 40 else { return }
+        bar.readinessAttempts += 1; bar.readinessScheduled = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak stock, weak bar] in
+            bar?.readinessScheduled = false
+            if let stock, stock.window != nil { sync(stock) }
+        }
+    }
+
+    static func capsuleFrame(in window: UIWindow) -> CGRect? {
+        guard let stock, let bar = objc_getAssociatedObject(stock, &barKey) as? GlassSystemTabBar,
+              bar.window === window, !bar.isHidden, let platter = platter(in: bar),
+              platter.bounds.width >= CGFloat(max(1, bar.items?.count ?? 1)) * 44,
+              platter.bounds.height >= 30 else { return nil }
+        return platter.convert(platter.bounds, to: window)
+    }
+
+    static func didLayoutSystemBar(_ bar: GlassSystemTabBar) {
+        guard let window = bar.window, window.bounds.width <= window.bounds.height,
+              let frame = capsuleFrame(in: window), frame != lastCapsuleFrame else { return }
+        lastCapsuleFrame = frame
+        applyTint(bar)
+        guard !playerRefreshScheduled else { return }
+        playerRefreshScheduled = true
+        DispatchQueue.main.async {
+            playerRefreshScheduled = false
+            GlassNowPlayingBar.refreshLayout()
+        }
     }
 
     // Spotify's own bar stays up until ours has every icon, so launch never shows an empty glass bar.
@@ -196,11 +237,16 @@ enum GlassTabBar {
     }
 
     private static func platter(in bar: UIView) -> UIView? {
-        if let platterView, platterView.isDescendant(of: bar), platterView.bounds.width > 100 { return platterView }
-        platterView = bar.eeveeFirst(UIView.self) {
-            $0 !== bar && NSStringFromClass(type(of: $0)).hasSuffix("PlatterView") && $0.bounds.width > 100
+        if let platterView, platterView.isDescendant(of: bar), platterView.bounds.width > bar.bounds.width * 0.7 { return platterView }
+        var widest: UIView?
+        var queue = bar.subviews
+        while !queue.isEmpty {
+            let view = queue.removeFirst(); queue += view.subviews
+            if NSStringFromClass(type(of: view)).hasSuffix("PlatterView"), view.bounds.width > 100,
+               view.bounds.width > (widest?.bounds.width ?? 0) { widest = view }
         }
-        return platterView
+        platterView = widest
+        return widest
     }
 
     private static func rememberTitles(_ titles: [String], of count: Int) {
@@ -307,6 +353,12 @@ enum GlassTabBar {
 class GlassTabBarViewHook: ClassHook<UIView> {
     typealias Group = GlassTabBarGroup
     static let targetName = "_TtC23NavigationUI_TabBarImpl10TabBarView"
+
+    func didMoveToWindow() {
+        orig.didMoveToWindow()
+        guard #available(iOS 26.0, *), target.window != nil else { return }
+        GlassTabBar.sync(target)
+    }
 
     func layoutSubviews() {
         orig.layoutSubviews()

@@ -5,6 +5,7 @@ struct KaraokeCreditsFooterView: View {
     let lyrics: KaraokeLyricsDto
     var showWriters = true
     var showDetails = true
+    var unfaded = false
 
     private var providerLabel: String? {
         nonEmpty(lyrics.providerName) ?? nonEmpty(lyrics.providerCode).map { _ in SpicyLyricsRepository.providerName }
@@ -30,14 +31,14 @@ struct KaraokeCreditsFooterView: View {
             if showWriters, !lyrics.songWriters.isEmpty {
                 Text("\("lyrics_written_by".localized) \(lyrics.songWriters.joined(separator: ", "))")
                     .font(.system(size: 19.5, weight: .semibold))
-                    .foregroundColor(.white.opacity(0.6))
+                    .foregroundColor(.white.opacity(unfaded ? 1 : 0.6))
                     .fixedSize(horizontal: false, vertical: true)
             }
             if showDetails {
                 if let provider = providerLabel {
                     Text("\("lyrics_provided_by".localized): \(provider)\(experimentSuffix)")
                         .font(.system(size: 19.5, weight: .semibold))
-                        .foregroundColor(.white.opacity(0.5))
+                        .foregroundColor(.white.opacity(unfaded ? 1 : 0.5))
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if let maker = nonEmpty(lyrics.makerName) {

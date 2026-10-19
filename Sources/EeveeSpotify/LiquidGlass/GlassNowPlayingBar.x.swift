@@ -14,6 +14,8 @@ enum GlassNowPlayingBar {
     private static var albumColor: UIColor?
     private static var misses = 0
     private static var styled: Styled?
+    private static var portrait: NativeViewPlacement?
+    private static var progress: NativeViewPlacement?
     private static var options = UserDefaults.nowPlayingBarOptions
     private static let observer = NotificationCenter.default.addObserver(
         forName: .eeveeNowPlayingBarOptionsChanged, object: nil, queue: .main
@@ -60,7 +62,30 @@ enum GlassNowPlayingBar {
                   NSStringFromClass(type(of: found)), NSCoder.string(for: found.frame), intercepted ? "intercepted" : "FAILED")
         }
         guard let card else { return }
+        if progress?.view?.isDescendant(of: host) != true {
+            progress?.restore()
+            progress = findProgress(in: host, card: card).map(NativeViewPlacement.init)
+            if let view = progress?.view {
+                eeveeLog("[EeveeSpotify][Glass] Mini progress %@", NSStringFromClass(type(of: view)))
+            }
+        }
+        let landscape = host.window.map { $0.bounds.width > $0.bounds.height } ?? false
+        if landscape { portrait?.restore(); portrait = nil }
         LandscapeNavigation.layoutPlayer(in: host, card: card)
+        if !landscape, let window = host.window, let tabs = GlassTabBar.capsuleFrame(in: window) {
+            if portrait?.view !== card { portrait?.restore(); portrait = NativeViewPlacement(card) }
+            let native = card.convert(card.bounds, to: window)
+            portrait?.place(CGRect(x: tabs.minX, y: native.minY, width: tabs.width, height: native.height), in: window)
+            card.layoutIfNeeded()
+        }
+        card.clipsToBounds = true
+        if let window = host.window, let view = progress?.view {
+            let rect = card.convert(card.bounds, to: window)
+            let height = min(2, max(1, view.bounds.height))
+            progress?.place(CGRect(x: rect.minX + 20, y: rect.maxY - height - 5,
+                                   width: max(1, rect.width - 40), height: height), in: window)
+            view.layoutIfNeeded()
+        }
         if artwork?.isDescendant(of: card) != true { artwork = findArtwork(in: card) }
         let frame = card.convert(card.bounds, to: host)
         let now = Styled(frame: frame, artwork: artwork?.bounds.size, options: options)
@@ -92,6 +117,33 @@ enum GlassNowPlayingBar {
             artwork.layer.cornerCurve = .continuous
             artwork.clipsToBounds = true
         }
+    }
+
+    static func refreshLayout() {
+        if let container { style(container) }
+    }
+
+    private static func findProgress(in host: UIView, card: UIView) -> UIView? {
+        let cardRect = card.convert(card.bounds, to: host)
+        var best: UIView?
+        var score: CGFloat = -1
+        var queue = host.subviews
+        while !queue.isEmpty {
+            let view = queue.removeFirst()
+            if view is UIVisualEffectView { continue }
+            queue += view.subviews
+            guard view !== card, !card.isDescendant(of: view), !view.isHidden,
+                  view.bounds.height > 0, view.bounds.height <= 8,
+                  view.bounds.width >= card.bounds.width * 0.5 else { continue }
+            let name = NSStringFromClass(type(of: view)).lowercased()
+            let named = view is UIProgressView || name.contains("progress")
+                || view.accessibilityIdentifier?.lowercased().contains("progress") == true
+            let distance = abs(view.convert(view.bounds, to: host).midY - cardRect.maxY)
+            guard named || distance <= 8 else { continue }
+            let candidate = (named ? 1000 : 0) + view.bounds.width - distance
+            if candidate > score { best = view; score = candidate }
+        }
+        return best
     }
 
     private static func artworkRadius(_ artwork: UIView) -> CGFloat {

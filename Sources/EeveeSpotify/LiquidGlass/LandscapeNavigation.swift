@@ -81,7 +81,7 @@ enum LandscapeNavigation {
             let scale = min(1, layout.player.height / max(1, player.originalHeight))
             player.place(layout.player, in: window, scale: scale)
         }
-        overflow(card)
+        if let parent = card.superview { overflow(parent) }
         card.layoutIfNeeded()
     }
 

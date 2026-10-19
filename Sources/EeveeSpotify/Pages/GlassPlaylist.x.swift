@@ -447,7 +447,7 @@ class PlaylistHeaderLayoutHook: ClassHook<UIView> {
     func sizeThatFits(_ size: CGSize) -> CGSize {
         let result = orig.sizeThatFits(size)
         if #available(iOS 26.0, *), PlaylistHeader.contains(target), let height = LandscapePlaylistHeader.height(in: target) {
-            return CGSize(width: result.width > 0 ? result.width : size.width, height: height)
+            return CGSize(width: LandscapePlaylistHeader.width(in: target) ?? (result.width > 0 ? result.width : size.width), height: height)
         }
         return result
     }

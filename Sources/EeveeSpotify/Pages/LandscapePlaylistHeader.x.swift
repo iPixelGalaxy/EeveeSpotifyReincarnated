@@ -20,12 +20,14 @@ enum LandscapePlaylistHeader {
         let inset: UIEdgeInsets
         let indicators: UIEdgeInsets
         let adjustment: UIScrollView.ContentInsetAdjustmentBehavior
+        let clips: Bool
         var visible = true
         init(root: UIView, list: UIScrollView) {
             self.root = root; scroll = list; viewport = NativeViewPlacement(root)
             self.list = root === list ? nil : NativeViewPlacement(list)
             inset = list.contentInset; indicators = list.verticalScrollIndicatorInsets
             adjustment = list.contentInsetAdjustmentBehavior
+            clips = root.clipsToBounds
             cover.contentMode = .scaleAspectFill; cover.clipsToBounds = true
             cover.layer.cornerRadius = 10; cover.layer.cornerCurve = .continuous
             cover.isAccessibilityElement = true; cover.accessibilityTraits = .image
@@ -60,6 +62,7 @@ enum LandscapePlaylistHeader {
             coverObservations.removeAll(); coverSources.removeAllObjects()
             let offset = scroll?.contentOffset
             list?.restore(); viewport.restore()
+            root?.clipsToBounds = clips
             (root?.next as? UIViewController)?.traitOverrides.remove(UITraitVerticalSizeClass.self)
             (root?.next as? UIViewController)?.traitOverrides.remove(UITraitHorizontalSizeClass.self)
             if let scroll {
@@ -85,6 +88,7 @@ enum LandscapePlaylistHeader {
             let column = CGRect(x: right, y: top, width: max(1, LandscapeNavigation.contentRight(in: window) - right), height: max(1, bottom - top))
             // Shrink the controller's viewport too: Spotify must measure this column like portrait.
             viewport.place(column, in: window)
+            root.clipsToBounds = true
             list?.place(root.bounds, in: root)
             if visible {
                 if cover.superview !== parent { parent.addSubview(cover) }
@@ -173,6 +177,14 @@ enum LandscapePlaylistHeader {
         return view.eeveeFirst(UIView.self, where: { NSStringFromClass(type(of: $0)).hasSuffix("HeaderContentLayout") })
     }
 
+    static func width(in view: UIView) -> CGFloat? {
+        let storedRoot = contentLayout(in: view).flatMap { (objc_getAssociatedObject($0, &headerKey) as? Header)?.pageRoot }
+        guard let root = pageRoot(for: view) ?? storedRoot, isLandscape(root),
+              let page = objc_getAssociatedObject(root, &pageKey) as? Page, let scroll = page.scroll,
+              scroll.bounds.width > 0 else { return nil }
+        return min(root.bounds.width, scroll.bounds.width)
+    }
+
     static func height(in view: UIView) -> CGFloat? {
         guard let layout = contentLayout(in: view), let state = objc_getAssociatedObject(layout, &headerKey) as? Header,
               let window = view.window ?? state.pageRoot?.window, window.bounds.width > window.bounds.height,
@@ -212,7 +224,11 @@ enum LandscapePlaylistHeader {
         if artwork.alpha != 0 { artwork.alpha = 0 }
         if image.alpha != 0 { image.alpha = 0 }
         if let stack = artwork.superview as? UIStackView, stack.arrangedSubviews.contains(artwork) { stack.removeArrangedSubview(artwork) }
-        let width = max(1, header.bounds.width - 32)
+        let available = Self.width(in: header) ?? header.bounds.width
+        if abs(header.bounds.width - available) > 0.5 {
+            var frame = header.frame; frame.size.width = available; header.frame = frame
+        }
+        let width = max(1, available - 32)
         let fitting = column.systemLayoutSizeFitting(CGSize(width: width, height: UIView.layoutFittingCompressedSize.height),
             withHorizontalFittingPriority: .required, verticalFittingPriority: .fittingSizeLevel).height
         let natural = fitting.isFinite && fitting > 8 && fitting < 10000 ? fitting : state.column.originalHeight
@@ -255,6 +271,9 @@ class LandscapePlaylistHeaderSizingHook: ClassHook<UICollectionViewCell> {
     static let targetName = PlaylistPillsCellHook.targetName
     func preferredLayoutAttributesFittingAttributes(_ attributes: UICollectionViewLayoutAttributes) -> UICollectionViewLayoutAttributes {
         let result = orig.preferredLayoutAttributesFittingAttributes(attributes)
+        if #available(iOS 26.0, *), let width = LandscapePlaylistHeader.width(in: target) {
+            result.size.width = width
+        }
         if #available(iOS 26.0, *), let height = LandscapePlaylistHeader.height(in: target),
            target.eeveeFirst(UIView.self, where: { $0.accessibilityIdentifier == "PL.Header" }) != nil {
             result.size = CGSize(width: result.size.width, height: height)
