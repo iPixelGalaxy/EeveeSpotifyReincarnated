@@ -9,8 +9,7 @@ enum LandscapeNavigation {
     private static var player: NativeViewPlacement?
     private static var rail: LandscapeNavigationRail?
     private static weak var playlist: UIView?
-    private static var fullscreen: NativeViewPlacement?
-    private static var rootRadius: CGFloat = 0
+    private static var lastWindowSize: CGSize?
     private static var updating = false
     private static weak var insetOwner: UIViewController?
     private static var originalRightInset: CGFloat = 0
@@ -66,14 +65,14 @@ enum LandscapeNavigation {
         self.stock = stock; self.bar = bar
         guard let layout = frames(window), let owner = window.rootViewController,
               let host = owner.viewIfLoaded else { restore(); return }
-        if fullscreen?.view !== host {
-            fullscreen?.restore()
-            rootRadius = host.layer.cornerRadius
-            fullscreen = NativeViewPlacement(host)
+        // UIKit owns the window root's frame, transform and constraints during rotation.
+        // Only the bounded player and navigation rail receive custom placement.
+        if lastWindowSize != window.bounds.size {
+            lastWindowSize = window.bounds.size
+            eeveeLog("[Landscape][Geometry] window %@, root bounds %@, root frame %@, transform %@",
+                     NSCoder.string(for: window.bounds), NSCoder.string(for: host.bounds),
+                     NSCoder.string(for: host.frame), NSCoder.string(for: host.transform))
         }
-        fullscreen?.place(window.bounds, in: window)
-        host.layer.cornerRadius = 0
-        overflow(host)
         if insetOwner !== owner {
             restoreContentInset()
             insetOwner = owner; originalRightInset = owner.additionalSafeAreaInsets.right
@@ -123,8 +122,7 @@ enum LandscapeNavigation {
 
     private static func restore() {
         restoreContentInset()
-        fullscreen?.view?.layer.cornerRadius = rootRadius
-        fullscreen?.restore(); fullscreen = nil
+        lastWindowSize = nil
         player?.restore(); player = nil
         rail?.removeFromSuperview(); rail = nil
         bar?.alpha = 1; bar?.isUserInteractionEnabled = true
