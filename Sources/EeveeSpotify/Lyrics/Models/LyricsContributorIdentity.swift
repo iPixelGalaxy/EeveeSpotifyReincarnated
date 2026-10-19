@@ -11,15 +11,18 @@ struct LyricsContributorIdentity: Sendable {
 
     // Match Spicy's credits: preserve display-name casing only when it identifies the same username.
     static func preferredName(username: String?, displayName: String?) -> String? {
-        let username = nonEmpty(username)
+        guard let username = nonEmpty(username) else { return nil }
         let displayName = nonEmpty(displayName)
-        if let username, let displayName, username.lowercased() == displayName.lowercased() {
+        if let displayName, username.lowercased() == displayName.lowercased() {
             return displayName
         }
-        return username ?? displayName
+        return username
     }
 
     func creditName(preserving suppliedName: String?) -> String {
-        Self.preferredName(username: username, displayName: Self.nonEmpty(suppliedName) ?? displayName) ?? username
+        if let suppliedName = Self.nonEmpty(suppliedName), suppliedName.lowercased() == username.lowercased() {
+            return suppliedName
+        }
+        return Self.preferredName(username: username, displayName: displayName) ?? username
     }
 }

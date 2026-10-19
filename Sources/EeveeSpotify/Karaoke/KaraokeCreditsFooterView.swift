@@ -24,8 +24,10 @@ struct KaraokeCreditsFooterView: View {
     }
 
     private var contributorKey: ContributorKey {
-        ContributorKey(makerName: nonEmpty(lyrics.makerName), makerURL: lyrics.makerUrl,
-                       uploaderName: nonEmpty(lyrics.uploaderName), uploaderURL: lyrics.uploaderUrl, showDetails: showDetails)
+        ContributorKey(makerName: nonEmpty(lyrics.makerName) ?? KaraokeProfileResolver.userID(profileURL: lyrics.makerUrl),
+                       makerURL: lyrics.makerUrl,
+                       uploaderName: nonEmpty(lyrics.uploaderName) ?? KaraokeProfileResolver.userID(profileURL: lyrics.uploaderUrl),
+                       uploaderURL: lyrics.uploaderUrl, showDetails: showDetails)
     }
 
     private var creditsReady: Bool {
@@ -36,7 +38,8 @@ struct KaraokeCreditsFooterView: View {
     private func resolveName(_ name: String?, link: String?) async -> String? {
         guard let name else { return nil }
         let profile = await KaraokeProfileResolver.shared.identity(profileURL: link)
-        return profile?.creditName(preserving: name) ?? name
+        // Lyrics metadata can put a display name in "username". Never restore it on lookup failure.
+        return profile?.creditName(preserving: name) ?? KaraokeProfileResolver.userID(profileURL: link)
     }
 
     private var providerLabel: String? {
@@ -77,7 +80,7 @@ struct KaraokeCreditsFooterView: View {
                     profile("lyrics_made_by".localized, name: maker, link: lyrics.makerUrl, avatar: lyrics.makerAvatarUrl)
                 }
                 if let uploader = (resolvedCredits?.key == contributorKey ? resolvedCredits?.uploader : contributorKey.uploaderName) {
-                    profile(nonEmpty(lyrics.makerName) == nil ? "lyrics_made_by".localized : "lyrics_uploaded_by".localized,
+                    profile(contributorKey.makerName == nil ? "lyrics_made_by".localized : "lyrics_uploaded_by".localized,
                             name: uploader, link: lyrics.uploaderUrl, avatar: lyrics.uploaderAvatarUrl)
                 }
                 if lyrics.timingExperiments.contains(.spaceGravity) {
