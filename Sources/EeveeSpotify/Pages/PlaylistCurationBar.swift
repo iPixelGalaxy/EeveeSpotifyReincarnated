@@ -40,6 +40,10 @@ final class PlaylistCurationBar: UIView {
     var hasAdd: Bool { bindings[.add] != nil }
     var hasSecondaryActions: Bool { bindings.keys.contains { $0 != .add } }
     var hasActions: Bool { !bindings.isEmpty }
+    var compactAddButton: UIButton? { hasAdd ? buttons[.add] : nil }
+    var compactSecondaryButtons: [UIButton] {
+        Action.allCases.filter { $0 != .add && bindings[$0] != nil }.compactMap { buttons[$0] }
+    }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -119,15 +123,16 @@ final class PlaylistCurationBar: UIView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
+        // The action row lays every compact control into one shared grid.
+        guard !compact else { return }
         let actions = Action.allCases.filter { bindings[$0] != nil && (!compact || $0 != .add) }
         let side: CGFloat = 44
         let gap = max(0, min(8, (bounds.width - CGFloat(actions.count) * side) / CGFloat(max(1, actions.count - 1))))
         var x = max(0, (bounds.width - CGFloat(actions.count) * side - CGFloat(max(0, actions.count - 1)) * gap) / 2)
         for action in actions {
-            buttons[action]?.frame = CGRect(x: x, y: compact ? 104 : 0, width: side, height: side)
+            buttons[action]?.frame = CGRect(x: x, y: 0, width: side, height: side)
             x += side + gap
         }
-        if compact { buttons[.add]?.frame = CGRect(x: bounds.width - side, y: 0, width: side, height: side) }
     }
 
     private func forward(_ action: Action) {

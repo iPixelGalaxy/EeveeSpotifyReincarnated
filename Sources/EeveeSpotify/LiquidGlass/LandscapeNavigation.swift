@@ -35,7 +35,7 @@ enum LandscapeNavigation {
         let rail = CGRect(x: window.bounds.maxX - gap - width, y: (window.bounds.height - height) / 2, width: width, height: height)
         let dockRight = rail.minX - 12
         let inPlaylist = playlist?.window === window
-        let left = max(safe.minX + 16, inPlaylist ? 72 : 24)
+        let left = inPlaylist ? safe.minX + 8 + 56 : max(safe.minX + 16, 24)
         let right = dockRight - 16 - (inPlaylist ? 56 : 0)
         let player = CGRect(x: left, y: safe.maxY - 50, width: max(140, right - left), height: 48)
         return (rail, player)
@@ -91,7 +91,7 @@ enum LandscapeNavigation {
 
     static func playlistDock(in window: UIWindow) -> (back: CGRect, more: CGRect)? {
         guard playlist?.window === window, let layout = frames(window) else { return nil }
-        return (CGRect(x: 16, y: layout.player.minY, width: 48, height: 48),
+        return (CGRect(x: layout.player.minX - 56, y: layout.player.minY, width: 48, height: 48),
                 CGRect(x: layout.player.maxX + 8, y: layout.player.minY, width: 48, height: 48))
     }
 

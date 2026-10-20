@@ -16,7 +16,7 @@ final class KaraokeLandscapeSidebar: UIScrollView {
         var geometry: Geometry?
         var view: UIView? { native.view }
 
-        init?(source: UIView, heightLimit: CGFloat) {
+        init?(source: UIView, unit: Unit, heightLimit: CGFloat) {
             let measured: CGFloat
             if source.bounds.height > heightLimit * 0.6,
                let stack = source.eeveeFirst(UIStackView.self, where: { !$0.isHidden && $0.bounds.height > 8 && $0.bounds.height < heightLimit * 0.6 }) {
@@ -24,7 +24,16 @@ final class KaraokeLandscapeSidebar: UIScrollView {
             } else { measured = source.bounds.height }
             guard source.bounds.width > 1, measured > 8, source.superview != nil else { return nil }
             self.source = source
-            height = max(32, measured)
+            // Native unit roots can still have fullscreen bounds on a landscape-first launch.
+            // Budget for their actual role instead of treating those transient bounds as content.
+            let limits: ClosedRange<CGFloat>
+            switch unit {
+            case .information: limits = 64...108
+            case .duration: limits = 32...48
+            case .controls: limits = 88...120
+            case .dj: limits = 44...88
+            }
+            height = min(limits.upperBound, max(limits.lowerBound, measured))
             native = NativeViewPlacement(source)
         }
     }
@@ -87,7 +96,7 @@ final class KaraokeLandscapeSidebar: UIScrollView {
         let retired = placements.removeValue(forKey: unit)
         releaseRetiredVisibility()
         retired?.native.restore()
-        guard let placement = Placement(source: root, heightLimit: max(200, bounds.height)) else { return }
+        guard let placement = Placement(source: root, unit: unit, heightLimit: max(200, bounds.height)) else { return }
         placements[unit] = placement
         if let view = placement.view { pinVisibility(view, clips: true) }
         var ancestor = placement.view?.superview
@@ -176,9 +185,10 @@ final class KaraokeLandscapeSidebar: UIScrollView {
         let rows = Unit.allCases.compactMap { placements[$0] }.filter { $0.source?.window === window }
         let rowHeight = rows.reduce(CGFloat(0)) { $0 + $1.height }
         let gaps = CGFloat(rows.count) * 4 + 8
-        let desiredArtwork = min(bounds.width - 8, bounds.height * 0.64)
+        let desiredArtwork = min(bounds.width - 8, bounds.height * 0.58)
         let scale = rowHeight > 0 ? min(0.65, max(0.45, (bounds.height - desiredArtwork - gaps) / rowHeight)) : 0.65
-        let side = max(80, min(bounds.width - 8, bounds.height - rowHeight * scale - gaps))
+        // Keep the cover stable while units arrive; overflow remains scrollable in this sidebar.
+        let side = max(80, desiredArtwork)
         artwork.frame = CGRect(x: (bounds.width - side) / 2, y: 0, width: side, height: side)
         var y = side + 8
         for row in rows {

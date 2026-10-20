@@ -39,8 +39,18 @@ final class LandscapeNavigationRail: UIView {
     private var hoverActive = false
     private var items = [Item]()
     private var tint = UIColor.systemGreen
-    private var previewIndex = 0
     private var imageSize = CGSize.zero
+    private var images = [(white: UIImage, green: UIImage)]()
+    private weak var lens: UIView?
+    private var displayLink: CADisplayLink?
+    private var lastLensFrame: CGRect?
+    private final class ImageTarget {
+        weak var view: UIImageView?
+        let index: Int
+        var painted: UIImage?
+        init(_ view: UIImageView, index: Int) { self.view = view; self.index = index }
+    }
+    private var imageTargets = [ImageTarget]()
     private struct Item: Equatable {
         let title: String?
         let image: UIImage?
@@ -56,11 +66,9 @@ final class LandscapeNavigationRail: UIView {
         segments.accessibilityElementsHidden = true
         segments.addTarget(self, action: #selector(selectionChanged), for: .valueChanged)
         let monitor = HoverMonitor()
-        monitor.moved = { [weak self] touch in
+        monitor.moved = { [weak self] _ in
             guard let self, !items.isEmpty else { return }
             hoverActive = true
-            let fraction = touch.location(in: segments).x / max(1, segments.bounds.width)
-            preview(min(items.count - 1, max(0, Int(fraction * CGFloat(items.count)))))
         }
         monitor.finished = { [weak self] committed in
             // UIKit completes its own selection after passive recognizers receive the ending touch.
@@ -68,14 +76,22 @@ final class LandscapeNavigationRail: UIView {
                 guard let self else { return }
                 hoverActive = false
                 if committed { _ = commit(segments.selectedSegmentIndex) }
-                else if let model { update(model); preview(segments.selectedSegmentIndex) }
-                renderImages()
+                else if let model { update(model) }
             }
         }
         segments.addGestureRecognizer(monitor)
         addSubview(segments)
     }
     required init?(coder: NSCoder) { nil }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        displayLink?.invalidate(); displayLink = nil
+        guard window != nil else { return }
+        let link = CADisplayLink(target: self, selector: #selector(updateLensTint))
+        link.add(to: .main, forMode: .common)
+        displayLink = link
+    }
 
     override func layoutSubviews() {
         super.layoutSubviews()
@@ -108,7 +124,8 @@ final class LandscapeNavigationRail: UIView {
         if !hoverActive {
             let selectionChanged = segments.selectedSegmentIndex != selected
             if selectionChanged { segments.selectedSegmentIndex = selected }
-            if changed || selectionChanged { previewIndex = selected; renderImages() }
+            if changed { renderImages() }
+            if selectionChanged { lastLensFrame = nil }
         } else if changed { renderImages() }
         if let elements = accessibilityElements as? [TabAccessibility] {
             for element in elements {
@@ -118,23 +135,18 @@ final class LandscapeNavigationRail: UIView {
         }
     }
 
-    private func preview(_ index: Int) {
-        guard items.indices.contains(index), previewIndex != index else { return }
-        let previous = previewIndex; previewIndex = index
-        for position in [previous, index] where items.indices.contains(position) { renderImage(at: position) }
-    }
-
     private func renderImages() {
         guard imageSize.width > 0, imageSize.height > 0 else { return }
-        for index in items.indices { renderImage(at: index) }
+        images = items.map { item in
+            (renderImage(item, color: .white, symbol: item.image),
+             renderImage(item, color: tint, symbol: item.selectedImage ?? item.image))
+        }
+        for index in images.indices { segments.setImage(images[index].white, forSegmentAt: index) }
+        imageTargets.removeAll()
+        lastLensFrame = nil
     }
 
-    private func renderImage(at index: Int) {
-        guard imageSize.width > 0, imageSize.height > 0 else { return }
-        let item = items[index]
-        let selected = index == previewIndex
-        let color: UIColor = selected ? tint : .white
-        let symbol = selected ? item.selectedImage ?? item.image : item.image
+    private func renderImage(_ item: Item, color: UIColor, symbol: UIImage?) -> UIImage {
         let font = UIFont.systemFont(ofSize: 10, weight: .medium)
         let paragraph = NSMutableParagraphStyle()
         paragraph.alignment = .center
@@ -160,7 +172,65 @@ final class LandscapeNavigationRail: UIView {
                                         options: [.usesLineFragmentOrigin, .usesFontLeading], attributes: attributes, context: nil)
             }
         }
-        segments.setImage(image.withRenderingMode(.alwaysOriginal), forSegmentAt: index)
+        return image.withRenderingMode(.alwaysOriginal)
+    }
+
+    @objc private func updateLensTint() {
+        guard !images.isEmpty, images.count == segments.numberOfSegments else { return }
+        if lens?.isDescendant(of: segments) != true {
+            lens = segments.eeveeFirst(UIView.self) { NSStringFromClass(type(of: $0)).contains("_UILiquidLensView") }
+        }
+        guard let lens, !lens.isHidden, lens.alpha > 0.01 else { return }
+        let slot = segments.bounds.width / CGFloat(images.count)
+        if imageTargets.isEmpty || imageTargets.contains(where: { $0.view?.isDescendant(of: segments) != true }) {
+            imageTargets.removeAll()
+            var queue = segments.subviews
+            while let view = queue.popLast() {
+                if view === lens { continue }
+                queue.append(contentsOf: view.subviews)
+                guard let image = view as? UIImageView, image.image?.size == images[0].white.size else { continue }
+                let x = image.convert(CGPoint(x: image.bounds.midX, y: image.bounds.midY), to: segments).x
+                let index = min(images.count - 1, max(0, Int(x / max(1, slot))))
+                imageTargets.append(ImageTarget(image, index: index))
+            }
+        }
+        guard !imageTargets.isEmpty else { return }
+        let frame: CGRect
+        if let source = lens.layer.presentation(), let destination = segments.layer.presentation() {
+            frame = source.convert(source.bounds, to: destination)
+        } else { frame = lens.convert(lens.bounds, to: segments) }
+        guard frame != lastLensFrame || imageTargets.contains(where: { $0.view?.image !== $0.painted }) else { return }
+        lastLensFrame = frame
+        for target in imageTargets {
+            guard let view = target.view, view.bounds.width > 0, view.bounds.height > 0 else { continue }
+            let pair = images[target.index]
+            let size = pair.white.size
+            let local: CGRect
+            if let source = lens.layer.presentation(), let destination = view.layer.presentation() {
+                local = source.convert(source.bounds, to: destination)
+            } else { local = lens.convert(lens.bounds, to: view) }
+            let sx = size.width / view.bounds.width, sy = size.height / view.bounds.height
+            let clip = CGRect(x: (local.minX - view.bounds.minX) * sx, y: (local.minY - view.bounds.minY) * sy,
+                              width: local.width * sx, height: local.height * sy)
+            let radius = min(clip.width, clip.height) / 2
+            guard clip.intersects(CGRect(origin: .zero, size: size)) else {
+                if view.image !== pair.white { view.image = pair.white }
+                target.painted = pair.white
+                continue
+            }
+            // Paint underneath UIKit's real moving lens, so its own refraction still applies.
+            // Reading the presentation layer follows spring motion and overlap between slots.
+            let image = UIGraphicsImageRenderer(size: size).image { context in
+                pair.white.draw(at: .zero)
+                context.cgContext.addPath(UIBezierPath(roundedRect: clip, cornerRadius: radius).cgPath)
+                context.cgContext.clip()
+                pair.green.draw(at: .zero)
+            }
+            // Update only the displayed pixels; changing segment items here restarts native tracking.
+            let painted = image.withRenderingMode(.alwaysOriginal)
+            view.image = painted
+            target.painted = painted
+        }
     }
 
     @discardableResult private func commit(_ index: Int) -> Bool {
@@ -170,7 +240,6 @@ final class LandscapeNavigationRail: UIView {
             model.tabBar(model, didSelect: tabs[index])
         }
         update(model)
-        preview(index)
         return true
     }
 

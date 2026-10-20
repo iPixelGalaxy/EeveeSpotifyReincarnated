@@ -89,6 +89,7 @@ final class KaraokeOverlayPresenter {
     private static var compactVisibility: [ObjectIdentifier: VideoState] = [:]
 
     static func lockedCompactAlpha(_ value: CGFloat, in view: UIView) -> CGFloat {
+        if PlayerDeclutter.lyricsKeepsHidden(view) { return 0 }
         if landscapeSidebar?.keepsVisible(view) == true { return 1 }
         return objc_getAssociatedObject(view, &compactVisibilityKey) == nil ? value : 1
     }
@@ -142,7 +143,7 @@ final class KaraokeOverlayPresenter {
         return CGRect(x: 0, y: max(0, union.minY - 44), width: canvas.bounds.width, height: union.height + 88)
     }
     static func dismissSwipeStart(_ touch: UITouch) -> (point: CGPoint, band: CGRect)? {
-        guard isPresented, let canvas, let container, let touched = touch.view,
+        guard isPresented, !isLandscape, let canvas, let container, let touched = touch.view,
               touched.isDescendant(of: container), let hosted = hosting?.view,
               touched.isDescendant(of: hosted), let band = dismissalBand() else { return nil }
         let raw = touch.location(in: canvas)
@@ -168,6 +169,10 @@ final class KaraokeOverlayPresenter {
 
     static func routedControlHit(at point: CGPoint, in window: UIWindow, event: UIEvent?) -> UIView? {
         guard isPresented, canvas?.window === window else { return nil }
+        if isLandscape, let container, let hosted = hosting?.view {
+            let region = container.convert(container.activeRect, to: window)
+            if let hit = NativeHitRouter.hit(hosted, at: point, in: window, event: event, region: region) { return hit }
+        }
         if isLandscape, let hit = landscapeSidebar?.nativeHit(at: point, in: window, event: event) { return hit }
         // The header moves in portrait too, including while the full controls are showing.
         let roots = [header, footer] + (focused || isLandscape ? [controls, duration, information] : [])

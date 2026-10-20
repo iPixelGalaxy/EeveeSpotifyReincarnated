@@ -62,6 +62,11 @@ enum PlayerDeclutter {
         init(_ view: UIView) { self.view = view; alpha = view.alpha; interactive = view.isUserInteractionEnabled; accessible = view.accessibilityElementsHidden }
     }
     private static var forcedViews: [ObjectIdentifier: ForcedVisibility] = [:]
+    static func lyricsKeepsHidden(_ view: UIView) -> Bool {
+        guard lyricsOverride else { return false }
+        return forcedViews[ObjectIdentifier(view)]?.view === view
+            || (view is UICollectionViewCell && objc_getAssociatedObject(view, &interactionKey) != nil)
+    }
     private static let trimmedScrolls = NSHashTable<UIScrollView>.weakObjects()
 
     static func setLyricsOverride(_ enabled: Bool, in root: UIView?) {
@@ -148,7 +153,6 @@ enum PlayerDeclutter {
 
     // Arranged views vanish by alpha: some Spotify stacks trap when an arranged view is hidden.
     static func vanish(_ view: UIView, part: PlayerPart? = nil) {
-        guard view.alpha != 0 else { return }
         if lyricsOverride, let part, !configuredHidden.contains(.allCards), !configuredHidden.contains(part),
            !(part == .talkAboutSong && configuredHidden.contains(.aboutSong)) {
             let key = ObjectIdentifier(view)
@@ -237,11 +241,12 @@ enum PlayerDeclutter {
             cell.isUserInteractionEnabled = false
             cell.accessibilityElementsHidden = true
         } else if let saved = objc_getAssociatedObject(cell, &interactionKey) as? CardInteraction {
+            // Release the visibility lock before restoring a genuinely reused card.
+            objc_setAssociatedObject(cell, &interactionKey, nil, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
             cell.alpha = saved.alpha
             cell.isUserInteractionEnabled = saved.enabled
             cell.accessibilityElementsHidden = saved.accessibilityHidden
             cell.clipsToBounds = saved.clips
-            objc_setAssociatedObject(cell, &interactionKey, nil, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
         }
     }
 
@@ -253,6 +258,9 @@ enum PlayerDeclutter {
 
     static func hideLatePlayerElement(_ view: UIView) {
         guard hidden.contains(.allCards) || hidden.contains(.talkAboutSong) || hidden.contains(.aboutSong) else { return }
+        if lyricsOverride, let cell = view as? UICollectionViewCell, hiddenCard(for: cell) != nil {
+            updateCardInteraction(cell, hidden: true)
+        }
         var name = NSStringFromClass(type(of: view))
         if let controller = view.next as? UIViewController { name += NSStringFromClass(type(of: controller)) }
         if ["Martini_NPVCardProviderImpl", "Martini_ElementImpl", "Martini_FloatingChatImpl", "AboutTheSong"].contains(where: name.contains) {

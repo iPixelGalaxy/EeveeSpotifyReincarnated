@@ -9,7 +9,17 @@ final class PlaylistActionRow: UIView {
         didSet { if compactLayout != oldValue { placeCuration(); setNeedsLayout() } }
     }
     let curation = PlaylistCurationBar()
-    var compactHeight: CGFloat { (followControl == nil ? 96 : 144) + (curation.hasSecondaryActions ? 52 : 0) }
+    private var compactButtons: [UIButton] {
+        [curation.compactAddButton].compactMap { $0 }
+            + [downloadButton, shuffleButton, addButton, shareButton].filter { !$0.isHidden }
+            + curation.compactSecondaryButtons
+    }
+    var compactHeight: CGFloat { compactHeight(for: bounds.width) }
+    func compactHeight(for width: CGFloat) -> CGFloat {
+        let columns = max(1, Int(width / 44))
+        let rows = (compactButtons.count + columns - 1) / columns
+        return 44 + CGFloat(rows) * 52 + (followControl == nil ? 0 : 48)
+    }
     weak var download: UIView? {
         didSet {
             guard download !== oldValue else { return }
@@ -75,7 +85,7 @@ final class PlaylistActionRow: UIView {
         if compactLayout {
             if bounds.height != compactHeight {
                 frame.size.height = compactHeight
-                if let sidebar = superview as? UIScrollView { sidebar.contentSize.height = frame.maxY + 8 }
+                LandscapePlaylistHeader.actionsDidResize(self)
             }
             if curation.superview !== self { addSubview(curation) }
             curation.frame = bounds
@@ -123,6 +133,21 @@ final class PlaylistActionRow: UIView {
         return button
     }()
     private let shareButton = PlaylistActionRow.circle("square.and.arrow.up")
+    private let shuffledPlayButton: UIButton = {
+        let button = PlaylistActionRow.circle("shuffle")
+        let image = UIGraphicsImageRenderer(size: CGSize(width: 25, height: 25)).image { context in
+            UIImage(systemName: "shuffle", withConfiguration: UIImage.SymbolConfiguration(weight: .semibold))?
+                .draw(in: CGRect(x: 0, y: 1, width: 22, height: 21))
+            context.cgContext.setBlendMode(.clear)
+            context.cgContext.fillEllipse(in: CGRect(x: 14, y: 14, width: 12, height: 12))
+            context.cgContext.setBlendMode(.normal)
+            UIImage(systemName: "play.fill")?.draw(in: CGRect(x: 17, y: 17, width: 8, height: 8))
+        }
+        button.configuration?.image = image.withRenderingMode(.alwaysTemplate)
+        button.accessibilityLabel = "Play shuffled"
+        button.isHidden = true
+        return button
+    }()
     private let playButton: UIButton = {
         var config = UIButton.Configuration.prominentGlass()
         config.cornerStyle = .capsule
@@ -159,12 +184,13 @@ final class PlaylistActionRow: UIView {
     override init(frame: CGRect) {
         super.init(frame: frame)
         overrideUserInterfaceStyle = .dark
-        [downloadButton, shuffleButton, playButton, addButton, shareButton, followButton].forEach(addSubview)
+        [downloadButton, shuffleButton, playButton, shuffledPlayButton, addButton, shareButton, followButton].forEach(addSubview)
         downloadButton.isHidden = true
         downloadButton.addAction(UIAction { [weak self] _ in self?.forward(self?.download, "download") }, for: .primaryActionTriggered)
         shuffleButton.addSubview(shuffleDot)
         shuffleButton.addAction(UIAction { [weak self] _ in self?.forward(self?.shuffle, "shuffle") }, for: .primaryActionTriggered)
         playButton.addAction(UIAction { [weak self] _ in self?.forward(self?.play, "play") }, for: .primaryActionTriggered)
+        shuffledPlayButton.addAction(UIAction { [weak self] _ in self?.playShuffled() }, for: .primaryActionTriggered)
         addButton.addAction(UIAction { [weak self] _ in self?.forward(self?.add, "add") }, for: .primaryActionTriggered)
         followButton.addAction(UIAction { [weak self] _ in self?.forward(self?.followControl, "follow") }, for: .primaryActionTriggered)
         shareButton.addAction(UIAction { [weak self] _ in self?.forward(self?.share, "share") }, for: .primaryActionTriggered)
@@ -179,18 +205,21 @@ final class PlaylistActionRow: UIView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
+        shuffledPlayButton.isHidden = !compactLayout
         if compactLayout {
-            playButton.frame = CGRect(x: 0, y: 0, width: bounds.width - (curation.hasAdd ? 52 : 0), height: 44)
+            playButton.frame = CGRect(x: 0, y: 0, width: bounds.width - 52, height: 44)
+            shuffledPlayButton.frame = CGRect(x: bounds.width - 44, y: 0, width: 44, height: 44)
             curation.frame = bounds
-            let circles = [downloadButton, shuffleButton, addButton, shareButton].filter { !$0.isHidden }
+            let circles = compactButtons
             let side: CGFloat = 44
-            let gap = max(0, min(8, (bounds.width - CGFloat(circles.count) * side) / CGFloat(max(1, circles.count - 1))))
-            var x = (bounds.width - CGFloat(circles.count) * side - CGFloat(max(0, circles.count - 1)) * gap) / 2
-            for button in circles {
-                button.frame = CGRect(x: x, y: 52, width: side, height: side); x += side + gap
+            let columns = max(1, Int(bounds.width / side))
+            let gap = min(8, max(0, (bounds.width - CGFloat(columns) * side) / CGFloat(max(1, columns - 1))))
+            for (index, button) in circles.enumerated() {
+                let frame = CGRect(x: CGFloat(index % columns) * (side + gap), y: 52 + CGFloat(index / columns) * 52, width: side, height: side)
+                button.frame = button.superview === curation ? curation.convert(frame, from: self) : frame
             }
             shuffleDot.center = CGPoint(x: side / 2, y: side - 7)
-            followButton.frame = CGRect(x: 0, y: curation.hasSecondaryActions ? 156 : 104, width: bounds.width, height: 40)
+            followButton.frame = CGRect(x: 0, y: compactHeight - 40, width: bounds.width, height: 40)
             return
         }
         let side: CGFloat = 48, gap: CGFloat = 12
@@ -212,15 +241,28 @@ final class PlaylistActionRow: UIView {
         }
     }
 
-    private func forward(_ source: UIView?, _ name: String) {
-        guard let source else { return }
+    @discardableResult private func forward(_ source: UIView?, _ name: String) -> Bool {
+        guard let source else { return false }
         let control = (source as? UIControl) ?? source.eeveeFirst(UIControl.self)
         let fired = EeveeFireTap(control ?? source)
         if !fired { eeveeLog("[EeveeSpotify][Glass] Playlist %@ tap FAILED", name) }
         for delay in [0.4, 1.2, 2.5] { DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in self?.sync() } }
+        return fired
+    }
+
+    private func playShuffled() {
+        sync()
+        guard shuffle != nil, play != nil else { return }
+        if shuffleDot.isHidden, !forward(shuffle, "shuffle") { return }
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            let label = play?.accessibilityLabel ?? play?.eeveeFirst(UIControl.self)?.accessibilityLabel ?? ""
+            if !label.lowercased().contains("pause") { forward(play, "play shuffled") }
+        }
     }
 
     func sync() {
+        shuffledPlayButton.isEnabled = shuffle != nil && play != nil
         let downloadHidden = download == nil
         if downloadButton.isHidden != downloadHidden { downloadButton.isHidden = downloadHidden; setNeedsLayout() }
         let state = ((download?.accessibilityLabel ?? "") + " " + (download?.accessibilityValue ?? "")).lowercased()
@@ -270,8 +312,9 @@ final class PlaylistActionRow: UIView {
         if addButton.configuration != addConfig { addButton.configuration = addConfig }
 
         // Spotify marks shuffle with a small dot under its icon and swaps the icon for smart shuffle.
-        let dot = shuffle?.eeveeFirst(UIView.self) { $0.bounds.width <= 8 && $0.bounds.width > 0 && $0.backgroundColor != nil && !$0.isHidden }
-        let shuffled = (shuffle as? UIControl)?.isSelected == true || dot != nil
+        let dot = shuffle?.eeveeFirst(UIView.self) { $0.bounds.width <= 8 && $0.bounds.width > 0 && $0.backgroundColor != nil && !$0.isHidden && $0.alpha > 0.01 }
+        let shuffled = (shuffle as? UIControl)?.isSelected == true
+            || shuffle?.eeveeFirst(UIControl.self, where: { $0.isSelected }) != nil || dot != nil
         var shuffleConfig = shuffleButton.configuration
         shuffleConfig?.baseForegroundColor = shuffled ? Theme.accent : .white
         if let icon = shuffle?.eeveeFirst(UIImageView.self, where: { $0.image != nil && $0.bounds.width >= 16 })?.image {

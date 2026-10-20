@@ -107,7 +107,7 @@ enum LandscapePlaylistHeader {
                 $0 !== headline && (3..<80).contains($0.text?.trimmingCharacters(in: .whitespacesAndNewlines).count ?? 0)
                     && $0.font.pointSize < headline.font.pointSize
                     && $0.text?.lowercased() != headline.text?.lowercased()
-                    && !["play", "pause", "shuffle", "follow", "find on this page"].contains($0.text?.lowercased() ?? "")
+                    && !["play", "pause", "shuffle", "follow", "sort", "find on this page"].contains($0.text?.lowercased() ?? "")
             }.sorted { $0.font.pointSize > $1.font.pointSize }
             var text = [String]()
             for label in details {
@@ -151,13 +151,16 @@ enum LandscapePlaylistHeader {
             if scroll.backgroundColor != root.backgroundColor { scroll.backgroundColor = root.backgroundColor }
             if sidebar.superview !== root { root.addSubview(sidebar) }
             sidebar.frame = root.convert(CGRect(x: left, y: top, width: width, height: column.height), from: window)
-            cover.frame = CGRect(x: 0, y: 0, width: 112, height: 112)
             let titleHeight = min(44, title.sizeThatFits(CGSize(width: width, height: 100)).height)
-            title.frame = CGRect(x: 0, y: 120, width: width, height: titleHeight)
-            summary.frame = CGRect(x: 0, y: title.frame.maxY + 4, width: width, height: 32)
-            let actionY = summary.frame.maxY + 10
-            if let actions { actions.frame = CGRect(x: 0, y: actionY, width: width, height: actions.compactHeight) }
-            sidebar.contentSize = CGSize(width: width, height: actionY + (actions?.compactHeight ?? 0) + 8)
+            title.frame = CGRect(x: 0, y: 0, width: width, height: titleHeight)
+            let summaryHeight = min(32, summary.sizeThatFits(CGSize(width: width, height: 100)).height)
+            let actionHeight = actions?.compactHeight(for: width) ?? 0
+            let coverSize = min(width, max(112, column.height - titleHeight - actionHeight - summaryHeight - 36))
+            cover.frame = CGRect(x: 0, y: title.frame.maxY + 8, width: coverSize, height: coverSize)
+            let actionY = cover.frame.maxY + 12
+            if let actions { actions.frame = CGRect(x: 0, y: actionY, width: width, height: actionHeight) }
+            summary.frame = CGRect(x: 0, y: actionY + actionHeight + 8, width: width, height: summaryHeight)
+            sidebar.contentSize = CGSize(width: width, height: summary.frame.maxY + 8)
             if let controller = root.next as? UIViewController { dock.layout(controller, in: window) }
 
         }
@@ -328,6 +331,15 @@ enum LandscapePlaylistHeader {
         }
         page.bind(row, header: header)
         return true
+    }
+
+    static func actionsDidResize(_ row: PlaylistActionRow) {
+        DispatchQueue.main.async { [weak row] in
+            guard let row else { return }
+            for root in pages.allObjects {
+                if let page = objc_getAssociatedObject(root, &pageKey) as? Page, page.visible, page.actions === row { page.apply() }
+            }
+        }
     }
 
     static func layoutDock(in window: UIWindow) {
