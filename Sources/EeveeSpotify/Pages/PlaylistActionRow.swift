@@ -15,10 +15,12 @@ final class PlaylistActionRow: UIView {
             + curation.compactSecondaryButtons
     }
     var compactHeight: CGFloat { compactHeight(for: bounds.width) }
+    private func compactColumns(for width: CGFloat) -> Int { max(1, min(4, Int((width + 6) / 46))) }
     func compactHeight(for width: CGFloat) -> CGFloat {
-        let columns = max(1, Int(width / 44))
+        let columns = compactColumns(for: width)
         let rows = (compactButtons.count + columns - 1) / columns
-        return 44 + CGFloat(rows) * 52 + (followControl == nil ? 0 : 48)
+        let gridHeight: CGFloat = rows > 0 ? 8 + CGFloat(rows) * 40 + CGFloat(rows - 1) * 6 : 0
+        return 44 + gridHeight + (followControl == nil ? 0 : 48)
     }
     weak var download: UIView? {
         didSet {
@@ -177,6 +179,7 @@ final class PlaylistActionRow: UIView {
         var config = UIButton.Configuration.glass()
         config.cornerStyle = .capsule
         config.baseForegroundColor = .white
+        config.contentInsets = .zero
         config.image = UIImage(systemName: symbol, withConfiguration: UIImage.SymbolConfiguration(pointSize: 17, weight: .semibold))
         return UIButton(configuration: config)
     }
@@ -205,17 +208,20 @@ final class PlaylistActionRow: UIView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
+        clipsToBounds = compactLayout
+        curation.clipsToBounds = compactLayout
         shuffledPlayButton.isHidden = !compactLayout
         if compactLayout {
             playButton.frame = CGRect(x: 0, y: 0, width: bounds.width - 52, height: 44)
             shuffledPlayButton.frame = CGRect(x: bounds.width - 44, y: 0, width: 44, height: 44)
             curation.frame = bounds
             let circles = compactButtons
-            let side: CGFloat = 44
-            let columns = max(1, Int(bounds.width / side))
-            let gap = min(8, max(0, (bounds.width - CGFloat(columns) * side) / CGFloat(max(1, columns - 1))))
+            let side: CGFloat = 40, gap: CGFloat = 6
+            let columns = compactColumns(for: bounds.width)
+            let gridWidth = CGFloat(columns) * side + CGFloat(columns - 1) * gap
+            let left = max(0, (bounds.width - gridWidth) / 2)
             for (index, button) in circles.enumerated() {
-                let frame = CGRect(x: CGFloat(index % columns) * (side + gap), y: 52 + CGFloat(index / columns) * 52, width: side, height: side)
+                let frame = CGRect(x: left + CGFloat(index % columns) * (side + gap), y: 52 + CGFloat(index / columns) * (side + gap), width: side, height: side)
                 button.frame = button.superview === curation ? curation.convert(frame, from: self) : frame
             }
             shuffleDot.center = CGPoint(x: side / 2, y: side - 7)
@@ -243,8 +249,7 @@ final class PlaylistActionRow: UIView {
 
     @discardableResult private func forward(_ source: UIView?, _ name: String) -> Bool {
         guard let source else { return false }
-        let control = (source as? UIControl) ?? source.eeveeFirst(UIControl.self)
-        let fired = EeveeFireTap(control ?? source)
+        let fired = EeveeFireTap(source)
         if !fired { eeveeLog("[EeveeSpotify][Glass] Playlist %@ tap FAILED", name) }
         for delay in [0.4, 1.2, 2.5] { DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in self?.sync() } }
         return fired

@@ -1,5 +1,6 @@
 import Orion
 import UIKit
+import EeveeSpotifyC
 
 @available(iOS 26.0, *)
 enum LandscapePlaylistHeader {
@@ -120,8 +121,7 @@ enum LandscapePlaylistHeader {
             actions = row
             row.compactLayout = true; row.alpha = 1
             sources = [row.play, row.shuffle, row.add, row.share, row.followControl, row.download].compactMap { $0 }
-            targets = sources.compactMap { ($0 as? UIControl) ?? $0.eeveeFirst(UIControl.self) }
-                .flatMap { $0.allTargets.map { $0.base as AnyObject } }
+            targets = sources.flatMap { EeveeTapTargets($0).map { $0 as AnyObject } }
             if row.superview !== sidebar { sidebar.addSubview(row) }
             metadata(header)
             apply()

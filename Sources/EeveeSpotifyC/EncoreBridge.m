@@ -42,37 +42,99 @@ UIImage *EeveeEncoreIconImage(UIView *live, BOOL active) {
     return EeveeRenderTemplate(view);
 }
 
-// Spotify's tab items answer a tap recognizer, so replay its target-action pairs like a real touch would.
-BOOL EeveeFireTap(UIView *root) {
-    if ([root isKindOfClass:UIControl.class]) {
-        [(UIControl *)root sendActionsForControlEvents:UIControlEventTouchUpInside | UIControlEventPrimaryActionTriggered];
-        return YES;
-    }
+static NSArray *EeveeRecognizerTargets(UIGestureRecognizer *recognizer) {
     Ivar targetsIvar = class_getInstanceVariable(UIGestureRecognizer.class, "_targets");
-    if (!targetsIvar) return NO;
+    return targetsIvar ? object_getIvar(recognizer, targetsIvar) : @[];
+}
+
+// Native handlers check that their recognizer ended. Temporarily expose a recognized
+// tap on the original sender without changing UIKit's gesture state or dispatching twice.
+static NSInteger EeveeRecognizedState(id self, SEL command) { return UIGestureRecognizerStateRecognized; }
+static CGPoint EeveeRecognizedLocation(UIGestureRecognizer *self, SEL command, UIView *view) {
+    UIView *source = self.view;
+    return [source convertPoint:CGPointMake(CGRectGetMidX(source.bounds), CGRectGetMidY(source.bounds)) toView:view];
+}
+
+static Class EeveeTapReplayClass(Class original) {
+    @synchronized (UITapGestureRecognizer.class) {
+        NSString *name = [@"EeveeTapReplay_" stringByAppendingString:NSStringFromClass(original)];
+        Class replay = NSClassFromString(name);
+        if (replay) return replay;
+        replay = objc_allocateClassPair(original, name.UTF8String, 0);
+        if (!replay) return Nil;
+        Method state = class_getInstanceMethod(original, @selector(state));
+        Method location = class_getInstanceMethod(original, @selector(locationInView:));
+        class_addMethod(replay, @selector(state), (IMP)EeveeRecognizedState, method_getTypeEncoding(state));
+        class_addMethod(replay, @selector(locationInView:), (IMP)EeveeRecognizedLocation, method_getTypeEncoding(location));
+        objc_registerClassPair(replay);
+        return replay;
+    }
+}
+
+NSArray *EeveeTapTargets(UIView *root) {
+    NSMutableArray *targets = [NSMutableArray array];
+    NSMutableArray<UIView *> *queue = [NSMutableArray arrayWithObject:root];
+    while (queue.count) {
+        UIView *view = queue.lastObject; [queue removeLastObject];
+        [queue addObjectsFromArray:view.subviews];
+        if ([view isKindOfClass:UIControl.class]) {
+            UIControl *control = (UIControl *)view;
+            [targets addObjectsFromArray:control.allTargets.allObjects];
+            [control enumerateEventHandlers:^(UIAction *handler, id target, SEL action, UIControlEvents events, BOOL *stop) {
+                if (handler) [targets addObject:handler];
+                if (target) [targets addObject:target];
+            }];
+        }
+        for (UIGestureRecognizer *recognizer in view.gestureRecognizers) {
+            for (id pair in EeveeRecognizerTargets(recognizer)) {
+                Ivar ivar = class_getInstanceVariable([pair class], "_target");
+                id target = ivar ? object_getIvar(pair, ivar) : nil;
+                if (target) [targets addObject:target];
+            }
+        }
+    }
+    return targets;
+}
+
+// Search the original wrapper as well as controls; visual UIControls can have no actions.
+BOOL EeveeFireTap(UIView *root) {
     NSMutableArray<UIView *> *queue = [NSMutableArray arrayWithObject:root];
     while (queue.count) {
         UIView *view = queue.firstObject;
         [queue removeObjectAtIndex:0];
         [queue addObjectsFromArray:view.subviews];
+        if ([view isKindOfClass:UIControl.class]) {
+            UIControl *control = (UIControl *)view;
+            UIControlEvents events = control.allControlEvents;
+            UIControlEvents event = events & UIControlEventPrimaryActionTriggered ? UIControlEventPrimaryActionTriggered
+                : events & UIControlEventTouchUpInside ? UIControlEventTouchUpInside : 0;
+            if (event) { [control sendActionsForControlEvents:event]; return YES; }
+            if (@available(iOS 17.4, *)) {
+                if ([view isKindOfClass:UIButton.class] && ((UIButton *)view).menu && ((UIButton *)view).showsMenuAsPrimaryAction) {
+                    [control performPrimaryAction]; return YES;
+                }
+            }
+        }
         for (UIGestureRecognizer *recognizer in view.gestureRecognizers) {
-            if (![recognizer isKindOfClass:UITapGestureRecognizer.class] || !recognizer.enabled) continue;
+            if (![recognizer isKindOfClass:UITapGestureRecognizer.class] || !recognizer.enabled
+                || ((UITapGestureRecognizer *)recognizer).numberOfTapsRequired != 1) continue;
             BOOL fired = NO;
-            for (id pair in object_getIvar(recognizer, targetsIvar)) {
+            for (id pair in EeveeRecognizerTargets(recognizer)) {
                 Ivar targetIvar = class_getInstanceVariable([pair class], "_target");
                 Ivar actionIvar = class_getInstanceVariable([pair class], "_action");
                 if (!targetIvar || !actionIvar) continue;
                 id target = object_getIvar(pair, targetIvar);
                 SEL action = *(SEL *)((char *)(__bridge void *)pair + ivar_getOffset(actionIvar));
                 if (!target || !action || ![target respondsToSelector:action]) continue;
-                ((void (*)(id, SEL, id))objc_msgSend)(target, action, recognizer);
+                Class original = object_getClass(recognizer);
+                Class replay = EeveeTapReplayClass(original);
+                if (!replay) continue;
+                object_setClass(recognizer, replay);
+                @try { ((void (*)(id, SEL, id))objc_msgSend)(target, action, recognizer); }
+                @finally { object_setClass(recognizer, original); }
                 fired = YES;
             }
             if (fired) return YES;
-        }
-        if ([view isKindOfClass:UIControl.class] && view != root) {
-            [(UIControl *)view sendActionsForControlEvents:UIControlEventTouchUpInside];
-            return YES;
         }
     }
     return NO;

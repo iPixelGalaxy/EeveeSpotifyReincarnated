@@ -126,6 +126,18 @@ private struct KaraokeScrollingLines: View {
     let activeLineIndex: Int?
     let size: CGSize
 
+    private var scrollLineIndex: Int? {
+        guard options.earlyScrolling else { return activeLineIndex }
+        // Port the fork's separate scroll clock: look ahead without shifting syllable timing.
+        // During a gap, prepare the next foreground line instead of holding the finished one.
+        let lead = options.scrollLeadMs.isFinite ? min(800, max(0, options.scrollLeadMs)) : 250
+        let clock = currentMs + Int(lead)
+        let foreground = layouts.indices.filter { !layouts[$0].isBackground && !layouts[$0].isInterlude }
+        return foreground.first { layouts[$0].startMs <= clock && clock < layouts[$0].endMs }
+            ?? foreground.first { layouts[$0].startMs > clock }
+            ?? foreground.last
+    }
+
     @State private var isBrowsing = false
     @State private var isDragging = false
     @State private var resumeAt = Date.distantPast
@@ -171,7 +183,7 @@ private struct KaraokeScrollingLines: View {
     private var focus: UnitPoint {
         let lineHeight = KaraokeFont.shared.font(ofSize: fontSize).lineHeight + fontSize * 0.23
         var itemHeight = lineHeight
-        if let index = activeLineIndex, layouts.indices.contains(index) {
+        if let index = scrollLineIndex, layouts.indices.contains(index) {
             let layout = layouts[index]
             if !layout.isInterlude {
                 let alignment = options.textAlignment == .automatic
@@ -260,7 +272,7 @@ private struct KaraokeScrollingLines: View {
                     if naturalContentHeight.isFinite, options.pinnedFooterMode != .full { creditsTopPadding = max(0, height - naturalContentHeight) }
                     if !isBrowsing {
                         if lyricsEnded { proxy.scrollTo(creditsID, anchor: .bottom) }
-                        else if let activeLineIndex { proxy.scrollTo(activeLineIndex, anchor: focus) }
+                        else if let scrollLineIndex { proxy.scrollTo(scrollLineIndex, anchor: focus) }
                     }
                 }
                 .mask(
@@ -287,12 +299,12 @@ private struct KaraokeScrollingLines: View {
                     if lyricsEnded {
                         revealedCredits = true
                         proxy.scrollTo(creditsID, anchor: .bottom)
-                    } else if let activeLineIndex, activeLineIndex < lyrics.lines.count {
-                        proxy.scrollTo(activeLineIndex, anchor: focus)
+                    } else if let scrollLineIndex {
+                        proxy.scrollTo(scrollLineIndex, anchor: focus)
                     }
                 }
-                .onChange(of: activeLineIndex) { newIndex in
-                    guard !isBrowsing, !lyricsEnded, let newIndex = newIndex, newIndex < lyrics.lines.count else { return }
+                .onChange(of: scrollLineIndex) { newIndex in
+                    guard !isBrowsing, !lyricsEnded, let newIndex else { return }
                     withAnimation(scrollAnimation) {
                         proxy.scrollTo(newIndex, anchor: focus)
                     }
@@ -303,8 +315,8 @@ private struct KaraokeScrollingLines: View {
                         guard !isDragging, Date() >= resumeAt else { return }
                         isBrowsing = false
                         if lyricsEnded { revealedCredits = false }
-                        else if let activeLineIndex {
-                            withAnimation(scrollAnimation) { proxy.scrollTo(activeLineIndex, anchor: focus) }
+                        else if let scrollLineIndex {
+                            withAnimation(scrollAnimation) { proxy.scrollTo(scrollLineIndex, anchor: focus) }
                         }
                     }
                     if lyricsEnded, !revealedCredits, !isDragging {

@@ -51,6 +51,7 @@ final class PlaylistCurationBar: UIView {
             var configuration = UIButton.Configuration.glass()
             configuration.cornerStyle = .capsule
             configuration.baseForegroundColor = .white
+            configuration.contentInsets = .zero
             configuration.image = UIImage(systemName: action.symbol, withConfiguration: UIImage.SymbolConfiguration(pointSize: 17, weight: .semibold))
             let button = UIButton(configuration: configuration)
             button.isHidden = true
@@ -76,7 +77,7 @@ final class PlaylistCurationBar: UIView {
             let title = source.accessibilityLabel ?? GlassPlaylist.collect(UILabel.self, in: source).compactMap { $0.text }.joined(separator: " ")
             guard let action = Action.matching((source.accessibilityIdentifier ?? "") + " " + title) else { continue }
             let controls = (source as? UIControl).map { [$0] } ?? GlassPlaylist.collect(UIControl.self, in: source)
-            found[action] = Binding(source: source, targets: controls.flatMap { $0.allTargets.map { $0.base as AnyObject } })
+            found[action] = Binding(source: source, targets: EeveeTapTargets(source).map { $0 as AnyObject })
             let button = buttons[action]!
             button.accessibilityLabel = title
             button.isEnabled = controls.first?.isEnabled ?? true

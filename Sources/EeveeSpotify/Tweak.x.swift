@@ -227,6 +227,7 @@ struct EeveeSpotify: Tweak {
         }
 
         KaraokeRotation.activate()
+        activateRemotePlaybackProtection()
 
         // Local-only premium force; independent of patching, so premium UI survives everything else being off.
         activateEeveePremiumForce()

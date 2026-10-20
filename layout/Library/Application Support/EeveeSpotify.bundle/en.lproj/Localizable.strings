@@ -598,3 +598,6 @@ karaoke_portrait_header_offset = "Portrait header offset";
 karaoke_extra_splits_suffix = " (+ extra splits)";
 karaoke_automatic_splitting_suffix = " (+ automatic experimental splitting)";
 karaoke_space_gravity_timing_notice = "Experimental word sync enabled due to Space Gravity mode";
+karaoke_early_scrolling = "Early lyric scrolling";
+karaoke_scroll_lead = "Scroll lead time";
+karaoke_early_scrolling_detail = "Prepare the next lyric during gaps. Scrolling moves early; word timing stays unchanged.";

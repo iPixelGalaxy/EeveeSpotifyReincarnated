@@ -135,6 +135,16 @@ struct EeveeLyricsSettingsView: View {
                 gravityControls()
                 wordSplittingControls()
                 Toggle("karaoke_smooth_scrolling".localized, isOn: $karaokeOptions.smoothScrolling)
+                Toggle("karaoke_early_scrolling".localized, isOn: $karaokeOptions.earlyScrolling)
+                if karaokeOptions.earlyScrolling {
+                    HStack {
+                        Text("karaoke_scroll_lead".localized)
+                        Spacer()
+                        Text(String(format: "%.0f ms", karaokeOptions.scrollLeadMs)).font(.system(size: 14, design: .monospaced))
+                    }
+                    Slider(value: $karaokeOptions.scrollLeadMs, in: 0...800, step: 10)
+                    Text("karaoke_early_scrolling_detail".localized).font(.caption).foregroundColor(.gray)
+                }
                 customFontControls()
                 pinnedFooterControls()
                 Picker("karaoke_alignment".localized, selection: $karaokeOptions.textAlignment) {
