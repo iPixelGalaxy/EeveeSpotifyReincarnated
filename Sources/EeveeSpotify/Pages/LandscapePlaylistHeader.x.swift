@@ -42,7 +42,9 @@ enum LandscapePlaylistHeader {
             sidebar.showsVerticalScrollIndicator = false
             sidebar.contentInsetAdjustmentBehavior = .never
             title.font = .systemFont(ofSize: 17, weight: .bold); title.textColor = .white; title.numberOfLines = 2
-            summary.font = .systemFont(ofSize: 11); summary.textColor = .secondaryLabel; summary.numberOfLines = 2
+            title.textAlignment = .center
+            summary.font = .systemFont(ofSize: 11); summary.textColor = .secondaryLabel; summary.numberOfLines = 1
+            summary.adjustsFontSizeToFitWidth = true; summary.minimumScaleFactor = 0.65
             [cover, title, summary].forEach(sidebar.addSubview)
             objc_setAssociatedObject(list, &pageRootKey, PageLookup.WeakView(root), .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
         }
@@ -115,7 +117,9 @@ enum LandscapePlaylistHeader {
                 if let value = label.text, !text.contains(value) { text.append(value) }
                 if text.count == 2 { break }
             }
-            summary.text = text.joined(separator: "\n")
+            let parts = text.reversed().flatMap { $0.components(separatedBy: CharacterSet(charactersIn: "•·\n")) }
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+            summary.text = parts.joined(separator: " • ")
         }
         func bind(_ row: PlaylistActionRow, header: UIView) {
             actions = row
@@ -156,7 +160,7 @@ enum LandscapePlaylistHeader {
             let summaryHeight = min(32, summary.sizeThatFits(CGSize(width: width, height: 100)).height)
             let actionHeight = actions?.compactHeight(for: width) ?? 0
             let coverSize = min(width, max(112, column.height - titleHeight - actionHeight - summaryHeight - 36))
-            cover.frame = CGRect(x: 0, y: title.frame.maxY + 8, width: coverSize, height: coverSize)
+            cover.frame = CGRect(x: (width - coverSize) / 2, y: title.frame.maxY + 8, width: coverSize, height: coverSize)
             let actionY = cover.frame.maxY + 12
             if let actions { actions.frame = CGRect(x: 0, y: actionY, width: width, height: actionHeight) }
             summary.frame = CGRect(x: 0, y: actionY + actionHeight + 8, width: width, height: summaryHeight)

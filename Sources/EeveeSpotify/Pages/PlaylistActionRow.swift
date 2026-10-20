@@ -10,17 +10,16 @@ final class PlaylistActionRow: UIView {
     }
     let curation = PlaylistCurationBar()
     private var compactButtons: [UIButton] {
-        [curation.compactAddButton].compactMap { $0 }
+        [playButton, shuffledPlayButton] + [curation.compactAddButton].compactMap { $0 }
             + [downloadButton, shuffleButton, addButton, shareButton].filter { !$0.isHidden }
             + curation.compactSecondaryButtons
     }
     var compactHeight: CGFloat { compactHeight(for: bounds.width) }
-    private func compactColumns(for width: CGFloat) -> Int { max(1, min(4, Int((width + 6) / 46))) }
+    private func compactSide(for width: CGFloat) -> CGFloat { max(22, min(40, (width - 44) / 5)) }
     func compactHeight(for width: CGFloat) -> CGFloat {
-        let columns = compactColumns(for: width)
+        let columns = 5
         let rows = (compactButtons.count + columns - 1) / columns
-        let gridHeight: CGFloat = rows > 0 ? 8 + CGFloat(rows) * 40 + CGFloat(rows - 1) * 6 : 0
-        return 44 + gridHeight + (followControl == nil ? 0 : 48)
+        return CGFloat(rows) * compactSide(for: width) + CGFloat(max(0, rows - 1)) * 6 + 8 + (followControl == nil ? 0 : 48)
     }
     weak var download: UIView? {
         didSet {
@@ -137,7 +136,8 @@ final class PlaylistActionRow: UIView {
     private let shareButton = PlaylistActionRow.circle("square.and.arrow.up")
     private let shuffledPlayButton: UIButton = {
         let button = PlaylistActionRow.circle("shuffle")
-        let image = UIGraphicsImageRenderer(size: CGSize(width: 25, height: 25)).image { context in
+        let image = UIGraphicsImageRenderer(size: CGSize(width: 17, height: 17)).image { context in
+            context.cgContext.scaleBy(x: 17.0 / 25.0, y: 17.0 / 25.0)
             UIImage(systemName: "shuffle", withConfiguration: UIImage.SymbolConfiguration(weight: .semibold))?
                 .draw(in: CGRect(x: 0, y: 1, width: 22, height: 21))
             context.cgContext.setBlendMode(.clear)
@@ -208,21 +208,24 @@ final class PlaylistActionRow: UIView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        clipsToBounds = compactLayout
-        curation.clipsToBounds = compactLayout
+        // Leave room for Liquid Glass's press effect; the grid has ten-point side gutters.
+        clipsToBounds = false
+        curation.clipsToBounds = false
         shuffledPlayButton.isHidden = !compactLayout
         if compactLayout {
-            playButton.frame = CGRect(x: 0, y: 0, width: bounds.width - 52, height: 44)
-            shuffledPlayButton.frame = CGRect(x: bounds.width - 44, y: 0, width: 44, height: 44)
             curation.frame = bounds
             let circles = compactButtons
-            let side: CGFloat = 40, gap: CGFloat = 6
-            let columns = compactColumns(for: bounds.width)
+            let side = compactSide(for: bounds.width), gap: CGFloat = 6
+            let columns = 5
             let gridWidth = CGFloat(columns) * side + CGFloat(columns - 1) * gap
             let left = max(0, (bounds.width - gridWidth) / 2)
             for (index, button) in circles.enumerated() {
-                let frame = CGRect(x: left + CGFloat(index % columns) * (side + gap), y: 52 + CGFloat(index / columns) * (side + gap), width: side, height: side)
+                let frame = CGRect(x: left + CGFloat(index % columns) * (side + gap), y: 4 + CGFloat(index / columns) * (side + gap), width: side, height: side)
                 button.frame = button.superview === curation ? curation.convert(frame, from: self) : frame
+                var config = button.configuration
+                config?.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: min(17, side * 0.53), weight: .semibold)
+                if button === playButton { config?.title = nil }
+                if button.configuration != config { button.configuration = config }
             }
             shuffleDot.center = CGPoint(x: side / 2, y: side - 7)
             followButton.frame = CGRect(x: 0, y: compactHeight - 40, width: bounds.width, height: 40)
@@ -307,7 +310,9 @@ final class PlaylistActionRow: UIView {
         let playing = (play?.accessibilityLabel ?? play?.eeveeFirst(UIControl.self)?.accessibilityLabel)?.lowercased().contains("pause") == true
         var config = playButton.configuration
         config?.image = playing ? Self.pauseImage : Self.playImage
-        config?.title = playing ? Self.pauseTitle : Self.playTitle
+        config?.title = compactLayout ? nil : playing ? Self.pauseTitle : Self.playTitle
+        if !compactLayout { config?.preferredSymbolConfigurationForImage = nil }
+        playButton.accessibilityLabel = playing ? Self.pauseTitle : Self.playTitle
         if playButton.configuration != config { playButton.configuration = config }
 
         let liked = add?.accessibilityLabel?.lowercased().contains("remove") == true
