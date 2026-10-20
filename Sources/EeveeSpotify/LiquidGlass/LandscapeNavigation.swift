@@ -1,4 +1,3 @@
-import Orion
 import UIKit
 
 @available(iOS 26.0, *)
@@ -14,6 +13,8 @@ enum LandscapeNavigation {
     private static weak var surface: UIView?
     private static var surfaceRadius: CGFloat = 0
     private static var surfaceClips = false
+    private static weak var surfaceHost: UIView?
+    private static var surfaceBackground: UIColor?
     private static var updating = false
     private static weak var insetOwner: UIViewController?
     private static var originalRightInset: CGFloat = 0
@@ -44,6 +45,12 @@ enum LandscapeNavigation {
               }) else { return }
         if window.bounds.width > window.bounds.height {
             guard canvas.transform.isIdentity else { return }
+            if surfaceHost !== host {
+                surfaceHost?.backgroundColor = surfaceBackground
+                surfaceHost = host; surfaceBackground = host.backgroundColor
+            }
+            let fill = UIColor(white: 18.0 / 255, alpha: 1)
+            if host.backgroundColor != fill { host.backgroundColor = fill }
             if surface !== canvas {
                 surface?.layer.cornerRadius = surfaceRadius
                 surface = canvas; surfaceRadius = canvas.layer.cornerRadius
@@ -58,7 +65,16 @@ enum LandscapeNavigation {
             canvas.layer.cornerRadius = surfaceRadius
             canvas.clipsToBounds = surfaceClips
             surface = nil
+            surfaceHost?.backgroundColor = surfaceBackground
+            surfaceHost = nil
         }
+    }
+
+    static func surfaceFrame(_ proposed: CGRect, for view: UIView) -> CGRect {
+        guard view === surface, let window = view.window, window.bounds.width > window.bounds.height,
+              let parent = view.superview, view.transform.isIdentity else { return proposed }
+        // The owning controller can write its inset frame after the child's layout callback.
+        return parent.convert(window.bounds, from: window)
     }
 
     static func setPlaylist(_ root: UIView, visible: Bool) {
@@ -170,7 +186,7 @@ enum LandscapeNavigation {
         let bottom = playerCard.flatMap { card in
             card.window === window ? card.convert(card.bounds, to: window).maxY : nil
         } ?? window.safeAreaLayoutGuide.layoutFrame.maxY
-        let height = window.bounds.height * 0.05
+        let height = max(44, window.bounds.height * 0.05)
         return CGRect(x: window.bounds.minX, y: bottom - height, width: window.bounds.width, height: height)
     }
 
@@ -193,7 +209,7 @@ enum LandscapeNavigation {
 
     private static func playerHitFrame(in window: UIWindow, fallback: CGRect) -> CGRect {
         let visible = playerCard.map { $0.convert($0.bounds, to: window).intersection(fallback) } ?? fallback
-        return visible.insetBy(dx: 6, dy: 5)
+        return visible.insetBy(dx: -4, dy: -4)
     }
 
     static func nativeHit(at point: CGPoint, in window: UIWindow, event: UIEvent?) -> UIView? {
@@ -205,15 +221,5 @@ enum LandscapeNavigation {
             return NativeHitRouter.hit(card, at: point, in: window, event: event, region: hitFrame)
         }
         return nil
-    }
-}
-
-class LandscapeContentSurfaceHook: ClassHook<UIView> {
-    typealias Group = GlassTabBarGroup
-    static let targetName = "_TtC19MainUI_TabBarUIImplP33_FD252D04A07ACEB7AD27A83269E8CFAF19TouchForwardingView"
-
-    func layoutSubviews() {
-        orig.layoutSubviews()
-        if #available(iOS 26.0, *) { LandscapeNavigation.layoutContentSurface(in: target) }
     }
 }

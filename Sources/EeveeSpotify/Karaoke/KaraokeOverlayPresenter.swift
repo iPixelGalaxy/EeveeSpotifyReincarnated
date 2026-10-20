@@ -280,18 +280,29 @@ final class KaraokeOverlayPresenter {
         if isEnabled && UserDefaults.karaokeOptions.enabled && UserDefaults.lyricsSource.supportsCustomLyricsView {
             PlayerDeclutter.setLyricsOverride(true, in: playerRoot)
         }
-        if let view = controller.viewIfLoaded { registerCanvas(view) }
+        registerDJHead(controller)
         recoverNativeUnits(in: root)
         writeDebugLog("[Karaoke][DJ] preparing trackKnown=\(KaraokePlaybackTracker.shared.playerReportedTrackId() != nil)")
     }
 
     static func resumeDJPlayer(_ controller: UIViewController) {
-        if let view = controller.viewIfLoaded { registerCanvas(view) }
+        registerDJHead(controller)
         resumePlayer(djPlayerRoot(controller))
     }
 
+    static func registerDJHead(_ controller: UIViewController) {
+        guard let transport = controller.viewIfLoaded else { return }
+        registerControls(transport)
+        // DJ's head unit is the transport, not its Canvas. Keep lyrics outside the view that shrinks.
+        let content = transport.superview?.superview
+        let root = djPlayerRoot(controller).viewIfLoaded
+        if let plane = content, plane.bounds.height > transport.bounds.height * 2 {
+            registerCanvas(plane)
+        } else if let root, root !== transport { registerCanvas(root) }
+    }
+
     static func suspendDJPlayer(_ controller: UIViewController) {
-        guard canvas === controller.viewIfLoaded else { return }
+        guard controls === controller.viewIfLoaded else { return }
         suspendPlayer()
     }
 
@@ -341,15 +352,18 @@ final class KaraokeOverlayPresenter {
 
     private static func recoverNativeUnits(in controller: UIViewController) {
         guard let root = controller.viewIfLoaded else { return }
+        var djControls: UIView?
         var pending = controller.children
         while let child = pending.popLast() {
             pending.append(contentsOf: child.children)
             guard let view = child.viewIfLoaded, view.isDescendant(of: root) else { continue }
             let name = NSStringFromClass(type(of: child))
-            if name.contains("PlaybackControlsElementsUnit") { registerControls(view) }
+            if name.contains("DJMHeadUnitViewController") { djControls = view }
+            else if name.contains("PlaybackControlsElementsUnit") { registerControls(view) }
             else if name.contains("DurationElementUnit") || name.contains("DJMDurationElementsUnit") { registerDuration(view) }
             else if name.contains("InformationElementsUnit") || name.contains("DJMInformationUnit") { registerInformation(view) }
         }
+        if let djControls { registerControls(djControls) }
     }
 
     static func layoutPlayer(_ controller: UIViewController) {
@@ -379,8 +393,8 @@ final class KaraokeOverlayPresenter {
             }
             if let unit = view.next as? UIViewController {
                 let name = NSStringFromClass(type(of: unit))
-                if name.contains("PlaybackControlsElementsUnit"), controls !== view { registerControls(view) }
-                else if name.contains("DurationElementUnit"), duration !== view { registerDuration(view) }
+                if name.contains("PlaybackControlsElementsUnit") || name.contains("DJMHeadUnitViewController"), controls !== view { registerControls(view) }
+                else if name.contains("DurationElementUnit") || name.contains("DJMDurationElementsUnit"), duration !== view { registerDuration(view) }
             }
             suppressVideoSwitch(view)
             PlayerDeclutter.hideLatePlayerElement(view)

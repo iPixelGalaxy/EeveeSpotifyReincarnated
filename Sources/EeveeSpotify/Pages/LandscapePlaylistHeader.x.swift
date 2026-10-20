@@ -29,6 +29,7 @@ enum LandscapePlaylistHeader {
         private weak var nativeHeader: UIView?
         private var headerAlpha: CGFloat = 1
         var visible = true
+        private var prepared = false
         init(root: UIView, list: UIScrollView) {
             self.root = root; scroll = list
             self.list = root === list ? nil : NativeViewPlacement(list)
@@ -68,6 +69,7 @@ enum LandscapePlaylistHeader {
         }
         func restore() {
             coverObservations.removeAll(); coverSources.removeAllObjects()
+            if let scroll { LandscapePlaylistInsets.restore(scroll) }
             list?.restore()
             root?.clipsToBounds = clips
             nativeHeader?.alpha = headerAlpha
@@ -86,6 +88,7 @@ enum LandscapePlaylistHeader {
             if let root { LandscapeNavigation.setPlaylist(root, visible: false) }
         }
         func suspend() {
+            prepared = false
             sidebar.removeFromSuperview(); dock.restore()
             sources.removeAll(); targets.removeAll()
         }
@@ -126,6 +129,13 @@ enum LandscapePlaylistHeader {
         func apply() {
             guard visible, let root, let window = root.window,
                   window.bounds.width > window.bounds.height, let scroll else { return }
+            if !prepared {
+                prepared = true
+                DispatchQueue.main.async { [weak self, weak scroll] in
+                    guard self?.visible == true, let scroll else { return }
+                    LandscapePlaylistInsets.prepare(scroll)
+                }
+            }
             LandscapeNavigation.setPlaylist(root, visible: true)
             let safe = window.safeAreaLayoutGuide.layoutFrame
             let top = max(8, safe.minY + 8)

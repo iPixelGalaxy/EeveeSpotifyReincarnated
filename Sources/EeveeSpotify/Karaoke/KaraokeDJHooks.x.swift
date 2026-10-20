@@ -19,7 +19,7 @@ class KaraokeDJHeadHook: ClassHook<UIViewController> {
     }
     func viewDidLayoutSubviews() {
         orig.viewDidLayoutSubviews()
-        if let view = target.viewIfLoaded { KaraokeOverlayPresenter.registerCanvas(view) }
+        KaraokeOverlayPresenter.registerDJHead(target)
     }
     func viewDidDisappear(_ animated: Bool) {
         orig.viewDidDisappear(animated)

@@ -53,7 +53,12 @@ enum KaraokeFooterButton {
             row = nil
             if button.superview !== root { button.removeFromSuperview(); root.addSubview(button) }
             button.translatesAutoresizingMaskIntoConstraints = true
-            button.frame = CGRect(x: max(root.bounds.minX, root.bounds.maxX - 56), y: max(root.bounds.minY, root.bounds.maxY - 48), width: 40, height: 44)
+            let trailing = root.subviews.filter {
+                $0 !== button && !$0.isHidden && $0.alpha > 0.01 && $0.bounds.width > 0 && $0.frame.minX > root.bounds.midX
+            }.min(by: { $0.frame.minX < $1.frame.minX })
+            let right = trailing?.frame.minX ?? root.bounds.maxX - 56
+            let midY = trailing?.frame.midY ?? root.bounds.midY
+            button.frame = CGRect(x: max(root.bounds.minX + 16, right - 48), y: max(root.bounds.minY, midY - 22), width: 40, height: 44)
             update()
             return
         }
@@ -283,7 +288,7 @@ class KaraokeCompactVisibilityHook: ClassHook<UIView> {
         orig.setTransform(KaraokeOverlayPresenter.landscapeGeometry(for: target)?.transform
             ?? KaraokeOverlayPresenter.lockedCompactTransform(transform, in: target))
     }
-    func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+    @objc(pointInside:withEvent:) func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
         orig.point(inside: point, with: event) || KaraokeOverlayPresenter.compactHit(point, in: target)
     }
 }

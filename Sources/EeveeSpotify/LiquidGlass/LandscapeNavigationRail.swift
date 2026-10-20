@@ -3,31 +3,26 @@ import UIKit
 /// A native segmented control supplies the system's tracking, refraction and spring animation.
 @available(iOS 26.0, *)
 final class LandscapeNavigationRail: UIView {
-    private final class Segments: UISegmentedControl {
-        var hover: ((Int) -> Void)?
-        var finish: (() -> Void)?
-        private func preview(_ touch: UITouch) {
-            guard numberOfSegments > 0 else { return }
-            let x = touch.location(in: self).x
-            hover?(min(numberOfSegments - 1, max(0, Int(x / max(1, bounds.width) * CGFloat(numberOfSegments)))))
+    private final class HoverMonitor: UIGestureRecognizer {
+        var moved: ((UITouch) -> Void)?
+        var finished: ((Bool) -> Void)?
+        init() {
+            super.init(target: nil, action: nil)
+            cancelsTouchesInView = false; delaysTouchesBegan = false; delaysTouchesEnded = false
         }
-        override func beginTracking(_ touch: UITouch, with event: UIEvent?) -> Bool {
-            let tracking = super.beginTracking(touch, with: event)
-            if tracking { preview(touch) }
-            return tracking
+        override func canPrevent(_ other: UIGestureRecognizer) -> Bool { false }
+        override func canBePrevented(by other: UIGestureRecognizer) -> Bool { false }
+        override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
+            if let touch = touches.first { moved?(touch) }
         }
-        override func continueTracking(_ touch: UITouch, with event: UIEvent?) -> Bool {
-            let tracking = super.continueTracking(touch, with: event)
-            if tracking { preview(touch) }
-            return tracking
+        override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
+            if let touch = touches.first { moved?(touch) }
         }
-        override func endTracking(_ touch: UITouch?, with event: UIEvent?) {
-            super.endTracking(touch, with: event)
-            finish?()
+        override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
+            finished?(true); state = .failed
         }
-        override func cancelTracking(with event: UIEvent?) {
-            super.cancelTracking(with: event)
-            hover?(selectedSegmentIndex)
+        override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) {
+            finished?(false); state = .failed
         }
     }
     private final class TabAccessibility: UIAccessibilityElement {
@@ -40,7 +35,8 @@ final class LandscapeNavigationRail: UIView {
         override func accessibilityActivate() -> Bool { rail?.commit(index) ?? false }
     }
     private weak var model: GlassSystemTabBar?
-    private let segments = Segments(items: nil)
+    private let segments = UISegmentedControl(items: nil)
+    private var hoverActive = false
     private var items = [Item]()
     private var tint = UIColor.systemGreen
     private var previewIndex = 0
@@ -59,11 +55,24 @@ final class LandscapeNavigationRail: UIView {
         segments.transform = CGAffineTransform(rotationAngle: .pi / 2)
         segments.accessibilityElementsHidden = true
         segments.addTarget(self, action: #selector(selectionChanged), for: .valueChanged)
-        segments.hover = { [weak self] index in self?.preview(index) }
-        segments.finish = { [weak self] in
-            guard let self else { return }
-            _ = commit(segments.selectedSegmentIndex)
+        let monitor = HoverMonitor()
+        monitor.moved = { [weak self] touch in
+            guard let self, !items.isEmpty else { return }
+            hoverActive = true
+            let fraction = touch.location(in: segments).x / max(1, segments.bounds.width)
+            preview(min(items.count - 1, max(0, Int(fraction * CGFloat(items.count)))))
         }
+        monitor.finished = { [weak self] committed in
+            // UIKit completes its own selection after passive recognizers receive the ending touch.
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                hoverActive = false
+                if committed { _ = commit(segments.selectedSegmentIndex) }
+                else if let model { update(model); preview(segments.selectedSegmentIndex) }
+                renderImages()
+            }
+        }
+        segments.addGestureRecognizer(monitor)
         addSubview(segments)
     }
     required init?(coder: NSCoder) { nil }
@@ -96,7 +105,7 @@ final class LandscapeNavigationRail: UIView {
             setNeedsLayout()
         }
         items = next; tint = bar.tintColor
-        if !segments.isTracking {
+        if !hoverActive {
             let selectionChanged = segments.selectedSegmentIndex != selected
             if selectionChanged { segments.selectedSegmentIndex = selected }
             if changed || selectionChanged { previewIndex = selected; renderImages() }
@@ -151,10 +160,11 @@ final class LandscapeNavigationRail: UIView {
             model.tabBar(model, didSelect: tabs[index])
         }
         update(model)
+        preview(index)
         return true
     }
 
     @objc private func selectionChanged() {
-        if !segments.isTracking { _ = commit(segments.selectedSegmentIndex) }
+        if !hoverActive { _ = commit(segments.selectedSegmentIndex) }
     }
 }

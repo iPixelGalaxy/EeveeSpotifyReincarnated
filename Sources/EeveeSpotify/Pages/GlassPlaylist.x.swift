@@ -437,6 +437,12 @@ class PlaylistListHook: ClassHook<UIScrollView> {
     typealias Group = GlassPlaylistGroup
     static let targetName = "_TtC35ListUXPlatform_FreeTierPlaylistImpl32FTPTouchCancellingCollectionView"
 
+    func setContentInset(_ inset: UIEdgeInsets) {
+        guard #available(iOS 26.0, *) else { orig.setContentInset(inset); return }
+        let value = LandscapePlaylistInsets.effective(inset, in: target)
+        if target.contentInset != value { orig.setContentInset(value) }
+    }
+
     func layoutSubviews() {
         orig.layoutSubviews()
         guard #available(iOS 26.0, *) else { return }
