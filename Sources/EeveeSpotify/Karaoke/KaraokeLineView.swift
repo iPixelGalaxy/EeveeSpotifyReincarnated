@@ -78,28 +78,19 @@ private struct KaraokeInterludeView: View {
 
     var body: some View {
         let duration = Double(max(1, endMs - startMs)) / 3
+        let glow = KaraokeAnimationCurve.interludeGlow(elapsed: Double(currentMs - startMs), duration: Double(endMs - startMs))
         HStack(spacing: fontSize * 0.4) {
             ForEach(0..<3) { index in
                 let progress = min(1, max(0, (Double(currentMs - startMs) - Double(index) * duration) / duration))
-                let elapsed = Double(currentMs - startMs) - Double(index) * duration
-                let glow = KaraokeAnimationCurve.interludeGlow(elapsed: elapsed, duration: duration)
                 Circle()
                     .fill(Color.white)
                     .frame(width: fontSize * 0.5, height: fontSize * 0.5)
                     .opacity(Self.opacity.value(at: progress))
-                    .background(
-                        RadialGradient(stops: [
-                            .init(color: .white.opacity(glow * 0.7), location: 0),
-                            .init(color: .white.opacity(glow * 0.25), location: 0.45),
-                            .init(color: .clear, location: 1)
-                        ], center: .center, startRadius: 0, endRadius: fontSize * 0.75)
-                        .frame(width: fontSize * 1.5, height: fontSize * 1.5)
-                    )
-                    .shadow(color: .white.opacity(glow * 0.8), radius: 3)
                     .scaleEffect(Self.scale.value(at: progress))
                     .offset(y: fontSize * Self.lift.value(at: progress))
             }
         }
+        .shadow(color: .white.opacity(glow * 0.9), radius: 4 + 6 * glow)
         .padding(.vertical, 22)
         .frame(height: max(fontSize * 1.25, fontSize * 0.5 + 44))
         .accessibilityElement(children: .ignore)

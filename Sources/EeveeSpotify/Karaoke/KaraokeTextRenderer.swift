@@ -49,7 +49,6 @@ final class KaraokeTextPlan {
     let baseInk: CGColor
     let fillInks: [CGColor]
     let glowInks: [CGColor]
-    let interludeGlowGradient: CGGradient?
     let sweepGradient: CGGradient?
     let isInterlude: Bool
     let usesLineTiming: Bool
@@ -74,10 +73,7 @@ final class KaraokeTextPlan {
             let progress = Double($0) / 64
             return inkColor.withAlphaComponent(CGFloat(isInterlude ? dotOpacity.value(at: progress) : 0.5 + 0.45 * progress)).cgColor
         }
-        glowInks = (0...64).map { inkColor.withAlphaComponent(CGFloat($0) / 64 * 0.55).cgColor }
-        interludeGlowGradient = isInterlude ? CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(),
-            colors: [inkColor.withAlphaComponent(0.7).cgColor, inkColor.withAlphaComponent(0.25).cgColor,
-                     inkColor.withAlphaComponent(0).cgColor] as CFArray, locations: [0, 0.45, 1]) : nil
+        glowInks = (0...64).map { inkColor.withAlphaComponent(CGFloat($0) / 64 * (isInterlude ? 0.9 : 0.55)).cgColor }
         let all = words.flatMap { $0 }
         let lineStart = timingRange?.lowerBound ?? all.map(\.startMs).min() ?? 0
         let lineEnd = max(lineStart + 1, timingRange?.upperBound ?? all.map(\.endMs).max() ?? lineStart + 1)
@@ -298,7 +294,9 @@ final class KaraokeTextCanvas: UIView {
         let start = plan.startMs
         let end = plan.endMs
         let progress = min(1, max(0, Double(position - start) / Double(max(1, end - start))))
-        let glow = active ? Self.haloCurve.value(at: progress) : 0
+        let glow = active ? (plan.isInterlude
+            ? KaraokeAnimationCurve.interludeGlow(elapsed: Double(position - start), duration: Double(end - start))
+            : Self.haloCurve.value(at: progress)) : 0
         _ = halo.step(goal: glow, dt: dt, snap: seek || haloStamp == nil || UIAccessibility.isReduceMotionEnabled)
         haloStamp = stamp
         if active || renderingMotion {
@@ -377,9 +375,9 @@ final class KaraokeTextCanvas: UIView {
         CATransaction.setDisableActions(true)
         haloLayer.frame = bounds
         haloLayer.shadowColor = plan.inkColor.cgColor
-        haloLayer.shadowOpacity = Float(amount * 0.5)
+        haloLayer.shadowOpacity = plan.isInterlude ? 0 : Float(amount * 0.5)
         haloLayer.shadowRadius = 4 + 8 * amount
-        if amount > 0.001 {
+        if !plan.isInterlude, amount > 0.001 {
             let outline = CGMutablePath()
             let flip = CGAffineTransform(a: 1, b: 0, c: 0, d: -1,
                 tx: plan.horizontalGutter, ty: plan.verticalGutter + plan.height)
@@ -400,12 +398,16 @@ final class KaraokeTextCanvas: UIView {
         context.scaleBy(x: 1, y: -1)
         context.textMatrix = .identity
         if !renderingMotion { CTFrameDraw(plan.frame, context); context.restoreGState(); return }
+        if plan.isInterlude {
+            // Match the plugin's 4–10 px shadow once for the whole group, on one clock.
+            let glow = min(1, max(0, halo.position))
+            context.setShadow(offset: .zero, blur: CGFloat(4 + 6 * glow), color: plan.glowInks[Int(glow * 64)])
+            context.beginTransparencyLayer(auxiliaryInfo: nil)
+        }
         for glyph in plan.glyphs {
             let part = plan.segments[glyph.segment]
             let progress = min(1, max(0, Double(currentMs - part.highlightStartMs) / Double(max(1, part.highlightEndMs - part.highlightStartMs))))
-            let glow = plan.isInterlude
-                ? KaraokeAnimationCurve.interludeGlow(elapsed: Double(currentMs - part.highlightStartMs), duration: Double(part.highlightEndMs - part.highlightStartMs))
-                : currentMs < part.highlightStartMs ? 0 : (currentMs <= part.highlightEndMs ? progress : max(0, 1 - Double(currentMs - part.highlightEndMs) / 350))
+            let glow = currentMs < part.highlightStartMs ? 0 : (currentMs <= part.highlightEndMs ? progress : max(0, 1 - Double(currentMs - part.highlightEndMs) / 350))
             let fill = plan.fillInks[min(64, max(0, Int(progress * 64)))]
             // Feather over several letters, rather than cutting through one glyph.
             let count = plan.usesLineTiming ? plan.glyphs.count : part.glyphs.count
@@ -414,15 +416,7 @@ final class KaraokeTextCanvas: UIView {
             let (matrix, _) = transform(for: glyph, in: plan)
             context.saveGState()
             context.concatenate(matrix)
-            if glow > 0.01, let gradient = plan.interludeGlowGradient {
-                context.saveGState()
-                context.setAlpha(CGFloat(glow))
-                let center = CGPoint(x: glyph.bounds.midX, y: glyph.bounds.midY)
-                context.drawRadialGradient(gradient, startCenter: center, startRadius: 0,
-                    endCenter: center, endRadius: max(4, max(glyph.bounds.width, glyph.bounds.height)) * 1.5, options: [])
-                context.restoreGState()
-            }
-            if glow > 0.01 {
+            if !plan.isInterlude, glow > 0.01 {
                 context.setShadow(offset: .zero, blur: CGFloat(4 + 10 * glow), color: plan.glowInks[min(64, max(0, Int(glow * 64)))])
             }
             if let path = glyph.path {
@@ -449,6 +443,7 @@ final class KaraokeTextCanvas: UIView {
             }
             context.restoreGState()
         }
+        if plan.isInterlude { context.endTransparencyLayer() }
         context.restoreGState()
     }
 }
