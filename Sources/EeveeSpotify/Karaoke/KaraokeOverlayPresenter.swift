@@ -10,6 +10,8 @@ final class KaraokeOverlayPresenter {
     private static var restoreScheduled = false
     private static var retryCount = 0
     private static weak var canvas: UIView?
+    private static weak var djCanvas: UIView?
+    private static weak var djHead: UIViewController?
     private static weak var header: UIView?
     private static weak var information: UIView?
     private static weak var footer: UIView?
@@ -273,6 +275,7 @@ final class KaraokeOverlayPresenter {
 
     static func prepareDJPlayer(_ controller: UIViewController) {
         preparingAppearance = true
+        djHead = controller
         suspended = false
         retryCount = 0
         let root = djPlayerRoot(controller)
@@ -280,30 +283,43 @@ final class KaraokeOverlayPresenter {
         if isEnabled && UserDefaults.karaokeOptions.enabled && UserDefaults.lyricsSource.supportsCustomLyricsView {
             PlayerDeclutter.setLyricsOverride(true, in: playerRoot)
         }
+        prepareDJCanvas(controller)
         registerDJHead(controller)
         recoverNativeUnits(in: root)
         writeDebugLog("[Karaoke][DJ] preparing trackKnown=\(KaraokePlaybackTracker.shared.playerReportedTrackId() != nil)")
     }
 
     static func resumeDJPlayer(_ controller: UIViewController) {
+        djHead = controller
+        prepareDJCanvas(controller)
         registerDJHead(controller)
         resumePlayer(djPlayerRoot(controller))
     }
 
     static func registerDJHead(_ controller: UIViewController) {
-        guard let transport = controller.viewIfLoaded else { return }
+        guard djHead === controller, let transport = controller.viewIfLoaded else { return }
         registerControls(transport)
-        // DJ's head unit is the transport, not its Canvas. Keep lyrics outside the view that shrinks.
+    }
+
+    private static func prepareDJCanvas(_ controller: UIViewController) {
+        guard let transport = controller.viewIfLoaded else { return }
+        // Choose a fallback only during appearance. Layout callbacks must never replace the Canvas:
+        // the native ContentLayer controller also registers it, otherwise both hooks remount lyrics forever.
         let content = transport.superview?.superview
         let root = djPlayerRoot(controller).viewIfLoaded
         if let plane = content, plane.bounds.height > transport.bounds.height * 2 {
+            djCanvas = plane
             registerCanvas(plane)
-        } else if let root, root !== transport { registerCanvas(root) }
+        } else if let root, root !== transport {
+            djCanvas = root
+            registerCanvas(root)
+        }
     }
 
     static func suspendDJPlayer(_ controller: UIViewController) {
-        guard controls === controller.viewIfLoaded else { return }
-        suspendPlayer()
+        guard djHead === controller else { return }
+        if canvas === djCanvas { suspendPlayer() }
+        djCanvas = nil; djHead = nil
     }
 
     static func suspendPlayer() {
@@ -563,7 +579,9 @@ final class KaraokeOverlayPresenter {
     }
 
     static func registerCanvas(_ root: UIView) {
-        guard root.window != nil || preparingAppearance else { return }
+        guard !mounting, root.window != nil || preparingAppearance else { return }
+        // DJ's foreground owns its lyrics. A regular Canvas may still lay out behind the DJ mode.
+        if let djCanvas, root !== djCanvas { return }
         if canvas !== root, isPresented { removeHosting() }
         canvas = root
         if isPresented { updateFrame() } else { restoreIfNeeded() }
@@ -745,8 +763,8 @@ final class KaraokeOverlayPresenter {
             sidebar.attach(information, as: .information)
             sidebar.attach(duration, as: .duration)
             sidebar.attach(controls, as: .controls)
-            sidebar.setNeedsLayout()
-            sidebar.layoutIfNeeded()
+            // attach() and frame changes already schedule layout. Forcing it from native unit
+            // layout callbacks starts another layout pass while UIKit is still sizing those units.
             if canHideFooter { footer?.alpha = 0; footer?.isUserInteractionEnabled = false }
         }
         KaraokeRotation.update(controller: hosting.parent, enabled: isPresented)
