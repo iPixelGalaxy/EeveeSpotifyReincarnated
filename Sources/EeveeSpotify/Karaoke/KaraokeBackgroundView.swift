@@ -14,6 +14,7 @@ struct KaraokeBackgroundView: View {
         _fingerprint = State(initialValue: Self.lastFingerprint)
     }
     @State private var albumArtImage: UIImage?
+    @ObservedObject private var canvasAmbient = KaraokeCanvasAmbient.shared
     @State private var colors = Self.placeholderColors
     @State private var fingerprint: Data?
     @State private var generation = UUID()
@@ -24,9 +25,9 @@ struct KaraokeBackgroundView: View {
 
     var body: some View {
         ZStack {
-            if albumArtImage != nil, Self.metalRendererSupported {
+            if albumArtImage != nil || canvasAmbient.image != nil, Self.metalRendererSupported {
                 KaraokeMetalBackgroundView().ignoresSafeArea().transition(.opacity)
-            } else if let image = albumArtImage {
+            } else if let image = canvasAmbient.image ?? albumArtImage {
                 TimelineView(.periodic(from: .now, by: 1.0 / 24.0)) { timeline in
                     GeometryReader { geometry in
                         let time = timeline.date.timeIntervalSinceReferenceDate
@@ -87,7 +88,7 @@ struct KaraokeBackgroundView: View {
            let signature = Self.signature(image), signature != fingerprint {
             Self.lastImage = image
             Self.lastFingerprint = signature
-            if Self.metalRendererSupported { KaraokeBackgroundRenderer.shared?.setAlbumArt(image) }
+            if Self.metalRendererSupported { KaraokeBackgroundRenderer.shared?.setAlbumArt(canvasAmbient.image ?? image) }
             withAnimation(.easeInOut(duration: 1.6)) {
                 fingerprint = signature
                 albumArtImage = image

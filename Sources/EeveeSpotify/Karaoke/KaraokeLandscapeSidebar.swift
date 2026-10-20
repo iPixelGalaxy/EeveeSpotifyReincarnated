@@ -63,6 +63,7 @@ final class KaraokeLandscapeSidebar: UIScrollView {
     private var applying = false
     private var restored = false
     private let artwork = UIImageView()
+    private var canvasStage: UIView?
     private var refresh: Timer?
 
     init(frame: CGRect, host: UIViewController) {
@@ -79,9 +80,15 @@ final class KaraokeLandscapeSidebar: UIScrollView {
         else { artwork.image = UIImage(systemName: "music.note") }
         artwork.tintColor = .white
         addSubview(artwork)
+        if #available(iOS 15.0, *) {
+            let stage = KaraokeCanvasStageView(frame: bounds)
+            stage.visibilityChanged = { [weak self] visible in self?.artwork.isHidden = visible }
+            insertSubview(stage, at: 0); canvasStage = stage
+        }
         refresh = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
-            guard #available(iOS 15.0, *), let self, let image = KaraokeBackgroundView.lastImage else { return }
-            if self.artwork.image !== image { self.artwork.image = image }
+            guard #available(iOS 15.0, *), let self else { return }
+            (self.canvasStage as? KaraokeCanvasStageView)?.update()
+            if let image = KaraokeBackgroundView.lastImage, self.artwork.image !== image { self.artwork.image = image }
         }
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -180,6 +187,8 @@ final class KaraokeLandscapeSidebar: UIScrollView {
     override func layoutSubviews() {
         super.layoutSubviews()
         guard !restored, !applying else { return }
+        canvasStage?.frame = bounds
+        if #available(iOS 15.0, *) { (canvasStage as? KaraokeCanvasStageView)?.update() }
         applying = true
         defer { applying = false }
         let rows = Unit.allCases.compactMap { placements[$0] }.filter { $0.source?.window === window }
@@ -203,6 +212,7 @@ final class KaraokeLandscapeSidebar: UIScrollView {
 
     func restore() {
         restored = true
+        if #available(iOS 15.0, *) { (canvasStage as? KaraokeCanvasStageView)?.stop() }
         refresh?.invalidate(); refresh = nil
         for state in hiddenArtwork.values { state.restore() }
         hiddenArtwork.removeAll(); informationArtwork = nil

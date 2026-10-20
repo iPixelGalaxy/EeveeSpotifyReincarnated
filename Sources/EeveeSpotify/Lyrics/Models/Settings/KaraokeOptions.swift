@@ -35,6 +35,7 @@ struct KaraokeOptions: Codable, Hashable {
     var smoothScrolling = false
     var earlyScrolling = true
     var scrollLeadMs: Double = 250
+    var landscapeCanvas = true
     var pinnedFooterMode: KaraokePinnedFooterMode = .off
     var experimentalWordSplitting = false
     var wordSplittingEnabled: Bool { experimentalWordSplitting || spaceGravityMode }
@@ -50,7 +51,7 @@ struct KaraokeOptions: Codable, Hashable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case textAlignment, reversedDirection, enabled, blurIntensity, timingOffsetMs, landscapeHeaderOffset, portraitHeaderOffset, allowScreenRecording, textScale, textScaleVersion, spaceGravityMode, smoothScrolling, earlyScrolling, scrollLeadMs, pinnedFooterMode, experimentalWordSplitting, customFontEnabled, customFontURL
+        case textAlignment, reversedDirection, enabled, blurIntensity, timingOffsetMs, landscapeHeaderOffset, portraitHeaderOffset, allowScreenRecording, textScale, textScaleVersion, spaceGravityMode, smoothScrolling, earlyScrolling, scrollLeadMs, landscapeCanvas, pinnedFooterMode, experimentalWordSplitting, customFontEnabled, customFontURL
     }
 
     // Settings saved before these fields existed must keep decoding.
@@ -75,6 +76,7 @@ struct KaraokeOptions: Codable, Hashable {
         smoothScrolling = try container.decodeIfPresent(Bool.self, forKey: .smoothScrolling) ?? false
         earlyScrolling = try container.decodeIfPresent(Bool.self, forKey: .earlyScrolling) ?? true
         scrollLeadMs = min(800, max(0, try container.decodeIfPresent(Double.self, forKey: .scrollLeadMs) ?? 250))
+        landscapeCanvas = try container.decodeIfPresent(Bool.self, forKey: .landscapeCanvas) ?? true
         pinnedFooterMode = KaraokePinnedFooterMode(rawValue: try container.decodeIfPresent(String.self, forKey: .pinnedFooterMode) ?? "off") ?? .off
         experimentalWordSplitting = try container.decodeIfPresent(Bool.self, forKey: .experimentalWordSplitting) ?? false
         customFontEnabled = try container.decodeIfPresent(Bool.self, forKey: .customFontEnabled) ?? false

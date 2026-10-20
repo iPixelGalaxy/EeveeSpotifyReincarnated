@@ -91,7 +91,19 @@ enum KaraokeLyricsSettingsMenu {
         let action = UIAction(title: "karaoke_settings".localized, image: UIImage(systemName: "slider.horizontal.3")) { _ in
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { presentSettings(attempts: 8) }
         }
-        return menu.replacingChildren(menu.children + [UIMenu(title: "", identifier: section, options: .displayInline, children: [action])])
+        var children: [UIMenuElement] = []
+        if #available(iOS 15.0, *) {
+            children.append(UIDeferredMenuElement.uncached { completion in
+                let canvas = UIAction(title: "karaoke_landscape_canvas".localized, image: UIImage(systemName: "play.rectangle"),
+                                      state: UserDefaults.karaokeOptions.landscapeCanvas ? .on : .off) { item in
+                    var options = UserDefaults.karaokeOptions
+                    options.landscapeCanvas.toggle(); UserDefaults.karaokeOptions = options
+                    item.state = options.landscapeCanvas ? .on : .off
+                }
+                completion([canvas])
+            })
+        }
+        return menu.replacingChildren(menu.children + [UIMenu(title: "", identifier: section, options: .displayInline, children: children + [action])])
     }
     private static func presentSettings(attempts: Int) {
         guard settingsController == nil, let header, header.window != nil else { return }

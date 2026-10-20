@@ -30,6 +30,7 @@ final class KaraokePlaybackTracker {
     private var lastTrackId: String?
     // Only ever set from the player observer, unlike lastTrackId (which a lyrics fetch also sets).
     private var observedTrackId: String?
+    private var canvasURL: URL?
 
     private var didDumpStateShape = false
     private weak var playbackController: NSObject?
@@ -70,6 +71,13 @@ final class KaraokePlaybackTracker {
         }
 
         let trackObj = safeValue("track") as AnyObject?
+        let canvasSelector = NSSelectorFromString("metadataValueForKey:")
+        let reportedCanvas = trackObj.flatMap { track -> URL? in
+            guard track.responds(to: canvasSelector),
+                  let value = track.perform(canvasSelector, with: "canvas.url")?.takeUnretainedValue() as? String,
+                  let url = URL(string: value), url.scheme == "https" else { return nil }
+            return url
+        }
         let uriObj: Any? = trackObj.flatMap { obj -> Any? in
             guard obj.responds(to: Selector("URI")) else { return nil }
             return obj.value(forKey: "URI")
@@ -99,6 +107,8 @@ final class KaraokePlaybackTracker {
         queue.async {
             let elapsed = self.lastPositionStamp == 0 ? 0 : max(0, receivedAt - self.lastPositionStamp)
             let changedTrack = trackId != nil && trackId != self.observedTrackId
+            if let reportedCanvas { self.canvasURL = reportedCanvas }
+            else if changedTrack || isNonTrackItem { self.canvasURL = nil }
             let applied = self.lastIsPlaying && self.lastPlaybackSpeed > 0 ? min(abs(self.positionCorrection), elapsed * abs(self.correctionRate)) * (self.positionCorrection < 0 ? -1 : 1) : 0
             let projected = self.lastPosition + (self.lastIsPlaying ? elapsed * self.lastPlaybackSpeed : 0) + applied
             let error = (positionRaw ?? projected) - projected
@@ -212,6 +222,10 @@ final class KaraokePlaybackTracker {
 
     func isPlaying() -> Bool {
         queue.sync { lastIsPlaying }
+    }
+
+    func canvasSnapshot() -> (track: String?, url: URL?, playing: Bool) {
+        queue.sync { (observedTrackId, canvasURL, lastIsPlaying) }
     }
 
     private func uptimeSec() -> TimeInterval {

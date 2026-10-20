@@ -134,6 +134,8 @@ struct EeveeLyricsSettingsView: View {
             if karaokeOptions.enabled {
                 gravityControls()
                 wordSplittingControls()
+                Toggle("karaoke_landscape_canvas".localized, isOn: $karaokeOptions.landscapeCanvas)
+                Text("karaoke_landscape_canvas_detail".localized).font(.caption).foregroundColor(.gray)
                 Toggle("karaoke_smooth_scrolling".localized, isOn: $karaokeOptions.smoothScrolling)
                 Toggle("karaoke_early_scrolling".localized, isOn: $karaokeOptions.earlyScrolling)
                 if karaokeOptions.earlyScrolling {
