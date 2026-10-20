@@ -49,6 +49,8 @@ final class KaraokeLandscapeSidebar: UIScrollView {
     }
     private var visibility: [ObjectIdentifier: ViewState] = [:]
     private var placements: [Unit: Placement] = [:]
+    private weak var informationArtwork: UIView?
+    private var hiddenArtwork: [ObjectIdentifier: ViewState] = [:]
     private var applying = false
     private var restored = false
     private let artwork = UIImageView()
@@ -77,6 +79,7 @@ final class KaraokeLandscapeSidebar: UIScrollView {
 
     func attach(_ root: UIView?, as unit: Unit) {
         guard !restored, !applying, let root, window != nil, root.window === window else { return }
+        if unit == .information { hideInformationArtwork(in: root) }
         guard placements[unit]?.source !== root else { return }
         applying = true
         defer { applying = false }
@@ -102,6 +105,32 @@ final class KaraokeLandscapeSidebar: UIScrollView {
         visibility[key]?.desiredClips = clips
         view.alpha = 1; view.isHidden = false; view.isUserInteractionEnabled = true
         view.accessibilityElementsHidden = false; view.clipsToBounds = clips
+    }
+
+    private func hideInformationArtwork(in root: UIView) {
+        guard informationArtwork?.isDescendant(of: root) != true else { return }
+        let retired = hiddenArtwork
+        hiddenArtwork.removeAll()
+        for state in retired.values { state.restore() }
+        guard let image = root.eeveeFirst(UIView.self, where: {
+            NSStringFromClass(type(of: $0)).contains("ImageDataElementInput")
+        }) else { informationArtwork = nil; return }
+        informationArtwork = image
+        var targets = [image]
+        if let stack = image.superview as? UIStackView,
+           let index = stack.arrangedSubviews.firstIndex(of: image), index + 1 < stack.arrangedSubviews.count {
+            let spacer = stack.arrangedSubviews[index + 1]
+            if spacer.subviews.isEmpty, spacer.bounds.height == 0, spacer.bounds.width <= 24 { targets.append(spacer) }
+        }
+        for view in targets {
+            hiddenArtwork[ObjectIdentifier(view)] = ViewState(view, clips: view.clipsToBounds)
+            view.isHidden = true
+            view.accessibilityElementsHidden = true
+        }
+    }
+
+    func hidesArtwork(_ view: UIView) -> Bool {
+        !restored && hiddenArtwork[ObjectIdentifier(view)]?.view === view
     }
 
     private func releaseRetiredVisibility() {
@@ -165,6 +194,8 @@ final class KaraokeLandscapeSidebar: UIScrollView {
     func restore() {
         restored = true
         refresh?.invalidate(); refresh = nil
+        for state in hiddenArtwork.values { state.restore() }
+        hiddenArtwork.removeAll(); informationArtwork = nil
         for unit in Unit.allCases.reversed() { placements.removeValue(forKey: unit)?.native.restore() }
         for state in visibility.values { state.restore() }
         visibility.removeAll()

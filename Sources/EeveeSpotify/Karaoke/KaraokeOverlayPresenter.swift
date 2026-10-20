@@ -93,6 +93,7 @@ final class KaraokeOverlayPresenter {
         return objc_getAssociatedObject(view, &compactVisibilityKey) == nil ? value : 1
     }
     static func lockedCompactHidden(_ value: Bool, in view: UIView) -> Bool {
+        if landscapeSidebar?.hidesArtwork(view) == true { return true }
         if landscapeSidebar?.keepsVisible(view) == true { return false }
         return objc_getAssociatedObject(view, &compactVisibilityKey) == nil ? value : false
     }

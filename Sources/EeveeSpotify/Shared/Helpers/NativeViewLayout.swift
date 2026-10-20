@@ -1,7 +1,8 @@
 import UIKit
 
 enum NativeHitRouter {
-    static func hit(_ root: UIView, at point: CGPoint, in window: UIWindow, event: UIEvent?, region: CGRect? = nil) -> UIView? {
+    static func hit(_ root: UIView, at point: CGPoint, in window: UIWindow, event: UIEvent?, region: CGRect? = nil,
+                    allowOutsideBounds: Bool = false) -> UIView? {
         guard root.window === window, !root.isHidden, root.alpha > 0.01, root.isUserInteractionEnabled else { return nil }
         var ancestor = root.superview
         while let view = ancestor, view !== window {
@@ -13,14 +14,16 @@ enum NativeHitRouter {
         guard let visible = top?.viewIfLoaded, root.isDescendant(of: visible) else { return nil }
         if let region, !region.contains(point) { return nil }
         let local = root.convert(point, from: window)
-        guard root.bounds.contains(local) else { return nil }
+        let expanded = allowOutsideBounds && region?.contains(point) == true
+        guard root.bounds.contains(local) || expanded else { return nil }
         if let hit = root.hitTest(local, with: event), hit.isDescendant(of: root),
-           hit !== root || root is UIControl || root.gestureRecognizers?.isEmpty == false { return hit }
+           hit !== root || root is UIControl || root.gestureRecognizers?.isEmpty == false || expanded { return hit }
         // A native container can reject a moved child even though the child is visible.
         for child in root.subviews.reversed() {
             if let hit = child.hitTest(child.convert(local, from: root), with: event), hit.isDescendant(of: root) { return hit }
         }
-        return nil
+        // Let the bar's ancestor tap/pan recognizers receive touches in its explicit padding.
+        return expanded ? root : nil
     }
 }
 

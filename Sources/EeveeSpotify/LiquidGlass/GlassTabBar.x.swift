@@ -156,6 +156,7 @@ enum GlassTabBar {
 
         LandscapeNavigation.didLayoutBar(bar, in: stock)
         didLayoutSystemBar(bar)
+        if let window = stock.window { NowPlayingBarStartup.navigationReady(in: window) }
         if stock.subviews.last !== bar { stock.bringSubviewToFront(bar) }
     }
 

@@ -64,6 +64,7 @@ enum GlassNowPlayingBar {
                   NSStringFromClass(type(of: found)), NSCoder.string(for: found.frame), intercepted ? "intercepted" : "FAILED")
         }
         guard let card else { return }
+        NowPlayingBarStartup.nativeReady(card)
         if progress?.view?.isDescendant(of: host) != true {
             if let view = progress?.view, view.layer.mask === progressMask { view.layer.mask = originalProgressMask }
             progress?.restore()

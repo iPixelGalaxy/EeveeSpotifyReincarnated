@@ -32,8 +32,8 @@ enum LandscapeNavigation {
         let rail = CGRect(x: window.bounds.maxX - gap - width, y: (window.bounds.height - height) / 2, width: width, height: height)
         let dockRight = rail.minX - 12
         let inPlaylist = playlist?.window === window
-        let left: CGFloat = inPlaylist ? 72 : 24
-        let right = dockRight - (inPlaylist ? 56 : 0)
+        let left = max(safe.minX + 16, inPlaylist ? 72 : 24)
+        let right = dockRight - 16 - (inPlaylist ? 56 : 0)
         let player = CGRect(x: left, y: safe.maxY - 50, width: max(140, right - left), height: 48)
         return (rail, player)
     }
@@ -182,11 +182,16 @@ enum LandscapeNavigation {
         (frames(window)?.player.minY ?? window.safeAreaLayoutGuide.layoutFrame.maxY - 64) - 12
     }
 
+    static func playbackFrame(in window: UIWindow) -> CGRect? { frames(window)?.player }
+
     static func swipeStartRegion(in window: UIWindow) -> CGRect {
+        if let layout = frames(window) {
+            return playerHitFrame(in: window, fallback: layout.player).insetBy(dx: 0, dy: -4).intersection(window.bounds)
+        }
         let bottom = playerCard.flatMap { card in
-            card.window === window ? card.convert(card.bounds, to: window).maxY : nil
+            card.window === window ? card.convert(card.bounds, to: window).maxY + 10 : nil
         } ?? window.safeAreaLayoutGuide.layoutFrame.maxY
-        let height = max(44, window.bounds.height * 0.05)
+        let height = max(64, window.bounds.height * 0.07)
         return CGRect(x: window.bounds.minX, y: bottom - height, width: window.bounds.width, height: height)
     }
 
@@ -197,7 +202,7 @@ enum LandscapeNavigation {
     static func pointInside(_ view: UIView, point: CGPoint) -> Bool? {
         guard let window = view.window, let layout = frames(window) else { return nil }
         let hitFrame = playerHitFrame(in: window, fallback: layout.player)
-        let inside = UIBezierPath(roundedRect: hitFrame, cornerRadius: hitFrame.height / 2).contains(view.convert(point, to: window))
+        let inside = hitFrame.contains(view.convert(point, to: window))
         if view === stock { return playerCard?.isDescendant(of: view) == true ? inside : false }
         if view === playerHost || view === playerCard { return inside }
         if playerCard?.isDescendant(of: view) == true, let controller = view.next as? UIViewController,
@@ -208,8 +213,8 @@ enum LandscapeNavigation {
     }
 
     private static func playerHitFrame(in window: UIWindow, fallback: CGRect) -> CGRect {
-        let visible = playerCard.map { $0.convert($0.bounds, to: window).intersection(fallback) } ?? fallback
-        return visible.insetBy(dx: -4, dy: -4)
+        let visible = playerCard.flatMap { $0.window === window ? $0.convert($0.bounds, to: window) : nil } ?? fallback
+        return visible.insetBy(dx: -8, dy: -10).intersection(window.bounds)
     }
 
     static func nativeHit(at point: CGPoint, in window: UIWindow, event: UIEvent?) -> UIView? {
@@ -217,8 +222,8 @@ enum LandscapeNavigation {
         if let rail, layout.rail.contains(point),
            let hit = NativeHitRouter.hit(rail, at: point, in: window, event: event, region: layout.rail) { return hit }
         let hitFrame = playerHitFrame(in: window, fallback: layout.player)
-        if let card = playerCard, UIBezierPath(roundedRect: hitFrame, cornerRadius: hitFrame.height / 2).contains(point) {
-            return NativeHitRouter.hit(card, at: point, in: window, event: event, region: hitFrame)
+        if let card = playerCard, hitFrame.contains(point) {
+            return NativeHitRouter.hit(card, at: point, in: window, event: event, region: hitFrame, allowOutsideBounds: true)
         }
         return nil
     }

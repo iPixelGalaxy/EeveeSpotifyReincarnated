@@ -101,6 +101,7 @@ func activateLiquidGlass() {
     }
     if options.nowPlayingBar {
         nowPlaying = activate(GlassNowPlayingBarGroup(), GlassNowPlayingBarContainerHook.targetName, GlassNowPlayingBarHook.targetName)
+        if nowPlaying { NowPlayingBarStartup.activate() }
         add("now playing bar", nowPlaying)
     }
     if player.glassLyricsCard {

@@ -32,6 +32,7 @@ class NativeControlWindowHitHook: ClassHook<UIWindow> {
     typealias Group = KaraokeGlobalRotationGroup
     @objc(hitTest:withEvent:) func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
         let native = orig.hitTest(point, with: event)
+        if #available(iOS 26.0, *), NowPlayingBarStartup.ownsLoadingHit(native) { return native }
         if let hit = KaraokeOverlayPresenter.routedControlHit(at: point, in: target, event: event) { return hit }
         if #available(iOS 26.0, *) {
             if let hit = LandscapeNavigation.nativeHit(at: point, in: target, event: event) { return hit }

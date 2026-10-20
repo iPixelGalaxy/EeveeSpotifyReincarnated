@@ -346,6 +346,7 @@ glass_style = "Style";
 spotify_flags = "Spotify flags";
 npb_subtitle = "Tint, artwork, device button, flags";
 npb_album_tint = "Tint with album color";
+npb_reconnecting = "Reconnecting…";
 npb_round_artwork = "Round artwork";
 npb_hide_connect = "Hide device button";
 npb_flag_two_lines = "Two lines of track info";
