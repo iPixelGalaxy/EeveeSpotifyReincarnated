@@ -33,6 +33,9 @@ final class KaraokePlaybackTracker {
     private var canvasURL: URL?
     private var metadataTrackID: String?
     private var releaseYear: String?
+    private var metadataAlbumURI: String?
+    private var metadataTitle: String?
+    private var metadataArtist: String?
 
     private var didDumpStateShape = false
     private weak var playbackController: NSObject?
@@ -74,6 +77,15 @@ final class KaraokePlaybackTracker {
 
         let trackObj = safeValue("track") as AnyObject?
         let canvasSelector = NSSelectorFromString("metadataValueForKey:")
+        func trackText(_ selector: String, key: String) -> String? {
+            guard let track = trackObj else { return nil }
+            if track.responds(to: NSSelectorFromString(selector)), let text = track.perform(NSSelectorFromString(selector))?.takeUnretainedValue() as? String, !text.isEmpty { return text }
+            guard track.responds(to: canvasSelector) else { return nil }
+            return track.perform(canvasSelector, with: key)?.takeUnretainedValue() as? String
+        }
+        let reportedTitle = trackText("trackTitle", key: "title")
+        let reportedArtist = trackText("artistName", key: "artist_name")
+        let reportedAlbum = trackText("albumURI", key: "album_uri") ?? trackText("albumURI", key: "album.uri")
         let reportedYear = trackObj.flatMap { track -> String? in
             guard track.responds(to: canvasSelector) else { return nil }
             for key in ["album_year", "albumYear", "album_release_year", "albumReleaseYear", "release_year", "releaseYear", "year", "album_date", "album_release_date", "release_date"] {
@@ -117,9 +129,20 @@ final class KaraokePlaybackTracker {
         queue.async {
             let elapsed = self.lastPositionStamp == 0 ? 0 : max(0, receivedAt - self.lastPositionStamp)
             let changedTrack = trackId != nil && trackId != self.observedTrackId
-            self.metadataTrackID = trackId
-            if let reportedYear, trackId != nil { self.releaseYear = reportedYear }
-            else if changedTrack || trackId == nil { self.releaseYear = nil }
+            // Position-only updates may omit track; only an explicit non-track URI clears metadata.
+            if let trackId {
+                if self.metadataTrackID != trackId {
+                    self.metadataAlbumURI = nil; self.metadataTitle = nil; self.metadataArtist = nil; self.releaseYear = nil
+                }
+                self.metadataTrackID = trackId
+                if let reportedAlbum { self.metadataAlbumURI = reportedAlbum }
+                if let reportedTitle { self.metadataTitle = reportedTitle }
+                if let reportedArtist { self.metadataArtist = reportedArtist }
+                if let reportedYear { self.releaseYear = reportedYear }
+            } else if isNonTrackItem {
+                self.metadataTrackID = nil; self.metadataAlbumURI = nil; self.metadataTitle = nil
+                self.metadataArtist = nil; self.releaseYear = nil
+            }
             if let reportedCanvas { self.canvasURL = reportedCanvas }
             else if changedTrack || isNonTrackItem { self.canvasURL = nil }
             let applied = self.lastIsPlaying && self.lastPlaybackSpeed > 0 ? min(abs(self.positionCorrection), elapsed * abs(self.correctionRate)) * (self.positionCorrection < 0 ? -1 : 1) : 0
@@ -164,7 +187,10 @@ final class KaraokePlaybackTracker {
             if self.lastTrackId != previousTrackId || self.observedTrackId != previousObservedTrackId {
                 KaraokeLyricsStore.shared.notify()
                 if let trackId = self.observedTrackId {
-                    DispatchQueue.main.async { prefetchLyricsIfNeeded(trackId: trackId) }
+                    DispatchQueue.main.async {
+                        LyricsFetchCache.shared.prioritize(trackId: trackId)
+                        prefetchLyricsIfNeeded(trackId: trackId)
+                    }
                 }
             }
         }
@@ -240,8 +266,15 @@ final class KaraokePlaybackTracker {
     func canvasSnapshot() -> (track: String?, url: URL?, playing: Bool) {
         queue.sync { (observedTrackId, canvasURL, lastIsPlaying) }
     }
-    func releaseYearSnapshot() -> (track: String?, year: String?) {
-        queue.sync { (metadataTrackID, releaseYear) }
+    func releaseYearSnapshot() -> (track: String?, year: String?, albumURI: String?) {
+        queue.sync { (metadataTrackID, releaseYear, metadataAlbumURI) }
+    }
+    func lyricsMetadata(for trackId: String) -> (title: String, artist: String)? {
+        queue.sync {
+            guard metadataTrackID == trackId, let title = metadataTitle, !title.isEmpty,
+                  let artist = metadataArtist, !artist.isEmpty else { return nil }
+            return (title, artist)
+        }
     }
 
     private func uptimeSec() -> TimeInterval {

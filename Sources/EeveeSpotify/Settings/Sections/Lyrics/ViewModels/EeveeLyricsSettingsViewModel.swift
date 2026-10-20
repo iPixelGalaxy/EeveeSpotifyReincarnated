@@ -3,6 +3,15 @@ import Combine
 
 class EeveeLyricsSettingsViewModel: ObservableObject {
     @Published var lyricsSource = UserDefaults.lyricsSource
+    @Published var lyricsSources = UserDefaults.lyricsSourcePreferences {
+        didSet {
+            UserDefaults.lyricsSourcePreferences = lyricsSources
+            lyricsSource = .automatic
+            UserDefaults.lyricsSource = .automatic
+            invalidateLyricsForSourceChange()
+            if let track = KaraokePlaybackTracker.shared.playerReportedTrackId() { prefetchLyricsIfNeeded(trackId: track) }
+        }
+    }
     
     @Published var lyricsOptions = UserDefaults.lyricsOptions {
         didSet { UserDefaults.lyricsOptions = lyricsOptions }

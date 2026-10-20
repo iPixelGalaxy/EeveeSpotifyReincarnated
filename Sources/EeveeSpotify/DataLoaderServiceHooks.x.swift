@@ -4,12 +4,20 @@ import Orion
 // Written from concurrent URLSession delegate queues; unguarded access crashed on release.
 private let accessTokenLock = NSLock()
 private var storedAccessToken: String?
+private var storedClientToken: String?
+
+var spotifyClientToken: String? {
+    accessTokenLock.lock(); defer { accessTokenLock.unlock() }; return storedClientToken
+}
 
 var spotifyAccessToken: String? {
     accessTokenLock.lock(); defer { accessTokenLock.unlock() }; return storedAccessToken
 }
 
 func captureAccessToken(from request: URLRequest?) {
+    if let client = request?.value(forHTTPHeaderField: "client-token") {
+        accessTokenLock.lock(); storedClientToken = client; accessTokenLock.unlock()
+    }
     guard let auth = request?.value(forHTTPHeaderField: "Authorization"), auth.hasPrefix("Bearer ") else { return }
     let token = String(auth.dropFirst(7))
     accessTokenLock.lock()

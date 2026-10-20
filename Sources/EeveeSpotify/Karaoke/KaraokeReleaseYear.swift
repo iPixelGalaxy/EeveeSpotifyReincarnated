@@ -2,13 +2,12 @@ import Foundation
 
 /// Prefer the player's album metadata, then resolve a missing year without blocking playback.
 final class KaraokeReleaseYear {
-    private static let cache: NSCache<NSString, NSString> = {
-        let cache = NSCache<NSString, NSString>(); cache.countLimit = 128; return cache
-    }()
     private(set) var year: String?
     var changed: (() -> Void)?
     private var track: String?
-    private var attempted = false
+    private var attempts = 0
+    private var token: String?
+    private var nextAttempt = Date.distantPast
     private var generation = 0
     private var task: URLSessionDataTask?
 
@@ -22,35 +21,38 @@ final class KaraokeReleaseYear {
         guard year != value else { return }
         year = value; changed?()
     }
-    func update(track id: String?, nativeYear: String?, enabled: Bool) {
+    func update(track id: String?, nativeYear: String?, albumURI: String? = nil, enabled: Bool) {
         if track != id {
-            generation += 1; task?.cancel(); task = nil
-            track = id; attempted = false; setYear(nil)
+            stop(); track = id; attempts = 0; nextAttempt = .distantPast; setYear(nil)
         }
-        guard enabled, let id else { task?.cancel(); task = nil; attempted = false; return }
-        if let year = Self.parse(nativeYear) {
-            if task != nil { generation += 1; task?.cancel(); task = nil }
-            Self.cache.setObject(year as NSString, forKey: id as NSString)
-            setYear(year); return
-        }
-        if let cached = Self.cache.object(forKey: id as NSString) { setYear(cached as String); return }
-        guard !attempted, let token = spotifyAccessToken,
-              let url = URL(string: "https://api.spotify.com/v1/tracks/\(id)") else { return }
-        attempted = true
+        guard enabled, let id else { stop(); return }
+        if let value = Self.parse(nativeYear) { stop(); setYear(value); return }
+        guard year == nil, task == nil, let currentToken = spotifyAccessToken else { return }
+        if token != currentToken { token = currentToken; attempts = 0; nextAttempt = .distantPast }
+        guard attempts < 4, Date() >= nextAttempt else { return }
+        attempts += 1
+        nextAttempt = Date().addingTimeInterval(12)
         let key = generation
-        var request = URLRequest(url: url); request.timeoutInterval = 8
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        task = URLSession.shared.dataTask(with: request) { [weak self] data, response, _ in
-            guard (response as? HTTPURLResponse)?.statusCode == 200, let data,
-                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let album = json["album"] as? [String: Any], let year = Self.parse(album["release_date"] as? String) else { return }
-            DispatchQueue.main.async {
+        func finish(_ value: String?) {
+            DispatchQueue.main.async { [weak self] in
                 guard let self, self.generation == key, self.track == id else { return }
-                Self.cache.setObject(year as NSString, forKey: id as NSString)
-                self.task = nil; self.setYear(year)
+                self.task = nil
+                if let value { self.setYear(value) }
+                else { self.nextAttempt = Date().addingTimeInterval(min(30, Double(self.attempts * 3))) }
             }
         }
-        task?.resume()
+        if let albumURI {
+            task = SpotifyMobileMetadata.albumYear(albumURI, completion: finish)
+        } else {
+            task = SpotifyMobileMetadata.track(id) { [weak self] info in
+                guard let info else { finish(nil); return }
+                if let year = info.year { finish(year); return }
+                DispatchQueue.main.async {
+                    guard let self, self.generation == key, self.track == id, let album = info.albumURI else { finish(nil); return }
+                    self.task = SpotifyMobileMetadata.albumYear(album, completion: finish)
+                }
+            }
+        }
     }
     func stop() { generation += 1; task?.cancel(); task = nil }
     deinit { task?.cancel() }

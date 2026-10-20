@@ -14,6 +14,11 @@ class SpicyLyricsRepository: LyricsRepository {
     }
 
     private let session: URLSession
+    func cancelInactive(trackId: String?) {
+        session.getAllTasks { tasks in
+            tasks.filter { trackId == nil || $0.taskDescription != trackId }.forEach { $0.cancel() }
+        }
+    }
 
     private static let apiUrl = "https://api.spicylyrics.org/v1/lyrics/"
 
@@ -40,12 +45,16 @@ class SpicyLyricsRepository: LyricsRepository {
         (0 ..< 5).map { attempt in min(10.0, 2.0 * pow(1.5, Double(attempt))) }
     }()
 
-    private func performQuery(trackId: String, apiKey: String) throws -> (Data, Int) {
+    private func performQuery(trackId: String, apiKey: String, isCancelled: () -> Bool) throws -> (Data, Int) {
         for (attempt, delay) in ([0.0] + SpicyLyricsRepository.queuedRetryDelays).enumerated() {
             if delay > 0 {
                 eeveeLog("[EeveeSpotify][SpicyLyrics] %@ queued (503), retrying in %.1fs (attempt %d)", trackId, delay, attempt + 1)
-                Thread.sleep(forTimeInterval: delay)
+                for _ in 0..<Int(delay * 10) {
+                    if isCancelled() { throw URLError(.cancelled) }
+                    Thread.sleep(forTimeInterval: 0.1)
+                }
             }
+            if isCancelled() { throw URLError(.cancelled) }
             let (data, httpStatus) = try performRequest(trackId: trackId, apiKey: apiKey)
             if httpStatus != 503 { return (data, httpStatus) }
         }
@@ -69,12 +78,13 @@ class SpicyLyricsRepository: LyricsRepository {
         var responseStatus = 0
         var responseError: Error?
 
-        session.dataTask(with: request) { data, response, error in
+        let task = session.dataTask(with: request) { data, response, error in
             responseData = data
             responseStatus = (response as? HTTPURLResponse)?.statusCode ?? 0
             responseError = error
             semaphore.signal()
-        }.resume()
+        }
+        task.taskDescription = trackId; task.resume()
 
         semaphore.wait()
 
@@ -125,7 +135,7 @@ class SpicyLyricsRepository: LyricsRepository {
             throw LyricsError.decodingError
         }
 
-        let dto: LyricsDto
+        var dto: LyricsDto
         switch type {
         case "Syllable": dto = parseSyllableLyrics(root, trackId: trackId, query: query, options: options, source: source)
         case "Line":     dto = parseLineLyrics(root, trackId: trackId, query: query, options: options, source: source)
@@ -134,6 +144,7 @@ class SpicyLyricsRepository: LyricsRepository {
             eeveeLog("[EeveeSpotify][SpicyLyrics] %@ unknown type '%@'", trackId, type)
             throw LyricsError.decodingError
         }
+        dto.timingQuality = type == "Syllable" ? 3 : (type == "Line" ? 2 : 1)
         eeveeLog("[EeveeSpotify][SpicyLyrics] %@: HTTP %d, %@, %d lines (%.0f ms)",
                  trackId, httpStatus, type, dto.lines.count, (CFAbsoluteTimeGetCurrent() - start) * 1000)
         return dto
@@ -199,6 +210,7 @@ class SpicyLyricsRepository: LyricsRepository {
             ? .romanized
             : (lines.map(\.content).canBeRomanized ? .canBeRomanized : .original)
 
+        var rich: KaraokeLyricsDto?
         if !karaokeLines.isEmpty {
             let songWriters = root["SongWriters"]?.arrayValue?.compactMap { $0.stringValue } ?? []
             let attribution = root["TTMLUploadMetadata"] ?? root["UploadAttribution"]
@@ -210,7 +222,7 @@ class SpicyLyricsRepository: LyricsRepository {
             )
             let normalizedKaraokeLines = SpicyLyricsRepository.normalizeMonotonicTiming(filledKaraokeLines)
 
-            KaraokeLyricsStore.shared.set(
+            rich = KaraokeLyricsStore.shared.set(
                 trackId: trackId,
                 source: source,
                 lyrics: KaraokeLyricsDto(
@@ -232,7 +244,8 @@ class SpicyLyricsRepository: LyricsRepository {
             lines: lines,
             timeSynced: true,
             romanization: romanization,
-            providerCredit: SpicyLyricsRepository.providerCredit(root)
+            providerCredit: SpicyLyricsRepository.providerCredit(root),
+            karaoke: rich
         )
     }
 
@@ -313,6 +326,7 @@ class SpicyLyricsRepository: LyricsRepository {
             ? .romanized
             : (lines.map(\.content).canBeRomanized ? .canBeRomanized : .original)
 
+        var rich: KaraokeLyricsDto?
         if !karaokeLines.isEmpty {
             let attribution = root["TTMLUploadMetadata"] ?? root["UploadAttribution"]
             let filledKaraokeLines = LyricsUncensorFill.fillKaraoke(
@@ -321,7 +335,7 @@ class SpicyLyricsRepository: LyricsRepository {
                 options: options
             )
 
-            KaraokeLyricsStore.shared.set(
+            rich = KaraokeLyricsStore.shared.set(
                 trackId: trackId,
                 source: source,
                 lyrics: KaraokeLyricsDto(
@@ -343,7 +357,8 @@ class SpicyLyricsRepository: LyricsRepository {
             lines: lines,
             timeSynced: true,
             romanization: romanization,
-            providerCredit: SpicyLyricsRepository.providerCredit(root)
+            providerCredit: SpicyLyricsRepository.providerCredit(root),
+            karaoke: rich
         )
     }
 
@@ -425,7 +440,7 @@ class SpicyLyricsRepository: LyricsRepository {
         try getLyrics(query, options: options, source: .spicylyrics)
     }
 
-    func getLyrics(_ query: LyricsSearchQuery, options: LyricsOptions, source: LyricsSource) throws -> LyricsDto {
+    func getLyrics(_ query: LyricsSearchQuery, options: LyricsOptions, source: LyricsSource, isCancelled: () -> Bool = { false }) throws -> LyricsDto {
         let trackId = query.spotifyTrackId
         guard trackId.range(of: "^[A-Za-z0-9]{22}$", options: .regularExpression) != nil else {
             eeveeLog("[EeveeSpotify][SpicyLyrics] Not a Spotify track id: '%@'", trackId)
@@ -434,7 +449,8 @@ class SpicyLyricsRepository: LyricsRepository {
 
         let start = CFAbsoluteTimeGetCurrent()
         let apiKey = UserDefaults.effectiveSpicyLyricsApiKey
-        let (data, httpStatus) = try performQuery(trackId: trackId, apiKey: apiKey)
+        let (data, httpStatus) = try performQuery(trackId: trackId, apiKey: apiKey, isCancelled: isCancelled)
+        if isCancelled() { throw URLError(.cancelled) }
         var dto = try parseLyricsData(data, httpStatus: httpStatus, trackId: trackId, query: query, options: options, start: start, source: source)
 
         let filledContents = LyricsUncensorFill.fill(

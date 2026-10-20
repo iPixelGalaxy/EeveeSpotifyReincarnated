@@ -61,30 +61,45 @@ extension EeveeLyricsSettingsView {
         
         if viewModel.lyricsSource.isReplacingLyrics {
             Section(footer: lyricsSourceFooter()) {
-                Picker(
-                    "lyrics_source".localized,
-                    selection: $viewModel.lyricsSource
-                ) {
-                    ForEach(LyricsSource.allCases, id: \.self) { lyricsSource in
-                        Text(lyricsSource.description).tag(lyricsSource)
-                    }
+                NavigationLink(destination: lyricsSourcesMenu()) {
+                    Text("lyrics_sources_manage".localized)
                 }
 
-                if viewModel.lyricsSource == .musixmatch {
-                    musixmatchTokenField()
-                }
-
-                if viewModel.lyricsSource == .spicylyrics || viewModel.lyricsSource == .appleMusic {
-                    spicyLyricsApiKeyField()
-                }
-                
-                if viewModel.lyricsSource == .lrclib {
-                    lrclibURLField()
-                }
             }
         }
     }
     
+    private func lyricsSourcesMenu() -> some View {
+        List {
+            Section(footer: Text("lyrics_sources_order_hint".localized)) {
+                ForEach(viewModel.lyricsSources.order, id: \.self) { source in
+                    Toggle(source.description, isOn: Binding(
+                        get: { !viewModel.lyricsSources.disabled.contains(source) },
+                        set: { enabled in
+                            if enabled { viewModel.lyricsSources.disabled.removeAll { $0 == source } }
+                            else if !viewModel.lyricsSources.disabled.contains(source) { viewModel.lyricsSources.disabled.append(source) }
+                        }
+                    ))
+                }
+                .onMove { indices, destination in viewModel.lyricsSources.order.move(fromOffsets: indices, toOffset: destination) }
+            }
+            Section(header: Text("lyrics_sources_rating".localized), footer: Text("lyrics_sources_rating_hint".localized)) {
+                HStack { Text("lyrics_sources_word".localized); Spacer(); Text("3") }
+                HStack { Text("lyrics_sources_line".localized); Spacer(); Text("2") }
+                HStack { Text("lyrics_sources_plain".localized); Spacer(); Text("1") }
+                Toggle("lyrics_sources_apple_quality".localized, isOn: $viewModel.lyricsSources.prioritizeAppleMusic)
+            }
+            Section {
+                if viewModel.lyricsSources.enabled.contains(.spicylyrics) || viewModel.lyricsSources.enabled.contains(.appleMusic) { spicyLyricsApiKeyField() }
+                if viewModel.lyricsSources.enabled.contains(.musixmatch) { musixmatchTokenField() }
+                if viewModel.lyricsSources.enabled.contains(.lrclib) { lrclibURLField() }
+                Button("lyrics_sources_reset".localized) { viewModel.lyricsSources = LyricsSourcePreferences() }
+            }
+        }
+        .navigationTitle("lyrics_sources_manage".localized)
+        .toolbar { EditButton() }
+    }
+
     @ViewBuilder private func musixmatchTokenField() -> some View {
         VStack(alignment: .leading, spacing: 5) {
             Text("musixmatch_user_token".localized)

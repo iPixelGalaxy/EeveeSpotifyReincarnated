@@ -1,6 +1,6 @@
 import Foundation
 
-enum LyricsSource: Int, CaseIterable, CustomStringConvertible {
+enum LyricsSource: Int, Codable, CaseIterable, CustomStringConvertible {
     case genius
     case lrclib
     case musixmatch
@@ -10,9 +10,10 @@ enum LyricsSource: Int, CaseIterable, CustomStringConvertible {
     case appleMusic
     case spotify
     case netease
+    case automatic
 
     public static var allCases: [LyricsSource] {
-        return [.spicylyrics, .musixmatch, .appleMusic, .spotify, .lrclib, .netease, .genius, .petit]
+        return [.automatic, .spicylyrics, .musixmatch, .appleMusic, .spotify, .lrclib, .netease, .genius, .petit]
     }
 
     var description: String {
@@ -26,6 +27,7 @@ enum LyricsSource: Int, CaseIterable, CustomStringConvertible {
         case .appleMusic:   return "Apple Music"
         case .spotify:     return "Spotify"
         case .netease:     return "NetEase"
+        case .automatic:   return "lyrics_sources_automatic".localized
         }
     }
 
@@ -35,6 +37,6 @@ enum LyricsSource: Int, CaseIterable, CustomStringConvertible {
     var supportsCustomLyricsView: Bool { isReplacingLyrics && self != .genius }
 
     static var defaultSource: LyricsSource {
-        .spicylyrics
+        .automatic
     }
 }

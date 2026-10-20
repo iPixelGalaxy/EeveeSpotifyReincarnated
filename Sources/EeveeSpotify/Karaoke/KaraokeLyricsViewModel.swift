@@ -11,12 +11,16 @@ final class KaraokeLyricsViewModel: ObservableObject {
     private var observer: NSObjectProtocol?
     private var optionsObserver: NSObjectProtocol?
     private var retryWork: DispatchWorkItem?
-    private var attempts = 0
+    private var activeFetch: LyricsFetch?
+    private var generation = 0
+    private var loadedRevision: UInt64?
+    private var loadedOptions: KaraokeOptions?
+    private var loadedSource: LyricsSource?
+    private var loadedPreferences: LyricsSourcePreferences?
+    private var timer: Timer?
 
     @Published private(set) var loadingFailed = false
 
-    private let maxAttempts = 45
-    private let retryInterval: TimeInterval = 2.0
 
     init(trackId: String?, lyrics: KaraokeLyricsDto?) {
         self.trackId = trackId
@@ -27,11 +31,13 @@ final class KaraokeLyricsViewModel: ObservableObject {
         optionsObserver = NotificationCenter.default.addObserver(
             forName: .eeveeKaraokeOptionsChanged, object: nil, queue: .main
         ) { [weak self] _ in self?.sync() }
+        let timer = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in self?.sync() }
+        self.timer = timer; RunLoop.main.add(timer, forMode: .common)
         sync()
     }
 
     deinit {
-        retryWork?.cancel()
+        retryWork?.cancel(); timer?.invalidate()
         if let observer { NotificationCenter.default.removeObserver(observer) }
         if let optionsObserver { NotificationCenter.default.removeObserver(optionsObserver) }
     }
@@ -55,64 +61,48 @@ final class KaraokeLyricsViewModel: ObservableObject {
     }
 
     private func sync() {
-        // The player's own track, not the one a lyrics request last named: Spotify also loads
-        // lyrics for songs that haven't started yet.
         let tracker = KaraokePlaybackTracker.shared
         guard let playing = tracker.playerReportedTrackId() ?? tracker.currentTrackId() else { return }
-
-        let stored = KaraokeLyricsStore.shared.lyrics(forTrackId: playing)
-        if playing != trackId {
-            retryWork?.cancel()
-            retryWork = nil
-            attempts = 0
-            loadingFailed = false
+        let snapshot = KaraokeLyricsStore.shared.snapshot(forTrackId: playing)
+        let options = UserDefaults.karaokeOptions
+        let source = UserDefaults.lyricsSource, preferences = UserDefaults.lyricsSourcePreferences
+        if playing != trackId || loadedSource != source || loadedPreferences != preferences {
+            generation += 1; retryWork?.cancel(); retryWork = nil; activeFetch = nil
+            loadedRevision = nil; loadedOptions = nil; loadingFailed = false
             trackId = playing
-            apply(stored)
-        } else {
-            apply(stored)
+            loadedSource = source; loadedPreferences = preferences
         }
-
-        if lyrics == nil {
+        if snapshot?.revision != loadedRevision || loadedOptions != options {
+            loadedRevision = snapshot?.revision; loadedOptions = options
+            apply(snapshot?.lyrics)
+        }
+        if lyrics != nil {
+            loadingFailed = false; retryWork?.cancel(); retryWork = nil
+        } else if activeFetch == nil && !loadingFailed {
             fetchMissingLyrics()
-        } else {
-            loadingFailed = false
-            retryWork?.cancel()
-            retryWork = nil
         }
     }
-
     func retry() {
-        if let trackId {
-            LyricsFetchCache.shared.retry(trackId: trackId, source: UserDefaults.lyricsSource)
-        }
-        retryWork?.cancel()
-        retryWork = nil
-        attempts = 0
-        loadingFailed = false
-        sync()
+        guard let trackId else { return }
+        generation += 1; retryWork?.cancel(); retryWork = nil; activeFetch = nil
+        LyricsFetchCache.shared.retry(trackId: trackId, source: UserDefaults.lyricsSource)
+        loadingFailed = false; sync()
     }
-
     private func fetchMissingLyrics() {
-        guard retryWork == nil, let trackId else { return }
-        guard attempts < maxAttempts else {
-            writeDebugLog("[Karaoke] no lyrics for \(trackId) after \(attempts) checks")
-            loadingFailed = true
-            return
+        guard activeFetch == nil, let id = trackId else { return }
+        let key = generation, fetch = lyricsFetch(trackId: id)
+        activeFetch = fetch
+        fetch.observe { [weak self] _ in
+            guard let self, self.generation == key, self.trackId == id else { return }
+            self.activeFetch = nil; self.retryWork?.cancel(); self.retryWork = nil
+            self.loadingFailed = KaraokeLyricsStore.shared.lyrics(forTrackId: id) == nil
+            self.sync()
         }
-        attempts += 1
-        writeDebugLog("[Karaoke] track changed to \(trackId) with the custom lyrics view open, fetching lyrics (attempt \(attempts))")
-        let fetch = lyricsFetch(trackId: trackId)
-        if fetch.result != nil {
-            // Completion without timed data is a real failure, not another slow request.
-            loadingFailed = true
-            return
+        let timeout = DispatchWorkItem { [weak self] in
+            guard let self, self.generation == key, self.trackId == id, self.lyrics == nil else { return }
+            self.loadingFailed = true; self.retryWork = nil
         }
-
-        let work = DispatchWorkItem { [weak self] in
-            self?.retryWork = nil
-            self?.sync()
-        }
-        retryWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + retryInterval, execute: work)
+        retryWork = timeout
+        DispatchQueue.main.asyncAfter(deadline: .now() + 45, execute: timeout)
     }
 }

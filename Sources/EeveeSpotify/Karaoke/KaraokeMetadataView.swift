@@ -32,7 +32,7 @@ final class KaraokeMetadataView: UIView {
     func update(from root: UIView?, options: KaraokeOptions) {
         guard let root, root.window === window, options.customFontEnabled || options.releaseYearPosition != .off else { clear(); return }
         let state = KaraokePlaybackTracker.shared.releaseYearSnapshot()
-        release.update(track: state.track, nativeYear: state.year, enabled: options.releaseYearPosition != .off)
+        release.update(track: state.track, nativeYear: state.year, albumURI: state.albumURI, enabled: options.releaseYearPosition != .off)
         var candidates = root.subviews, labels = [UILabel]()
         if let label = root as? UILabel { labels.append(label) }
         while let view = candidates.popLast() {

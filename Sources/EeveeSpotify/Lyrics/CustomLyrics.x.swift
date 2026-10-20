@@ -9,7 +9,19 @@ struct ModernLyricsGroup: HookGroup { }
 struct V91LyricsGroup: HookGroup { }            // 9.1.x-safe subset
 struct LyricsErrorHandlingGroup: HookGroup { }  // not activated on 9.1.x
 
-var lyricsState = LyricsLoadingState()
+private let lyricsStateLock = NSRecursiveLock()
+private var storedLyricsState = LyricsLoadingState()
+var lyricsState: LyricsLoadingState {
+    get { lyricsStateLock.lock(); defer { lyricsStateLock.unlock() }; return storedLyricsState }
+    set { lyricsStateLock.lock(); storedLyricsState = newValue; lyricsStateLock.unlock() }
+    _modify { lyricsStateLock.lock(); defer { lyricsStateLock.unlock() }; yield &storedLyricsState }
+}
+
+private func publishLoadingState(_ state: LyricsLoadingState, trackId: String) {
+    let tracker = KaraokePlaybackTracker.shared
+    guard (tracker.playerReportedTrackId() ?? tracker.currentTrackId()) == trackId else { return }
+    lyricsState = state
+}
 
 var hasShownRestrictedPopUp = false
 var hasShownUnauthorizedPopUp = false
@@ -19,76 +31,20 @@ private let petitLyricsRepository = PetitLyricsRepository()
 
 // Overload for 9.1.6 where we only have track ID from URL
 private func loadCustomLyricsForTrackId(_ trackId: String, source requestedSource: LyricsSource) throws -> Lyrics {
+    var lyricsState = LyricsLoadingState()
+    publishLoadingState(lyricsState, trackId: trackId)
+    defer { publishLoadingState(lyricsState, trackId: trackId) }
 
     var source = requestedSource
 
-    var currentTitle: String? = nil
-    var currentArtist: String? = nil
-    var hasMetadata = false
-
-    let needsMetadata = source == .genius || source == .lrclib || source == .petit
-
-    // 1. Use cached metadata if it's for the same track
-    if capturedTrackId == trackId, let title = capturedTrackTitle, let artist = capturedArtistName {
-        currentTitle = title
-        currentArtist = artist
-        hasMetadata = true
+    var metadata = KaraokePlaybackTracker.shared.lyricsMetadata(for: trackId) ?? LyricsTrackMetadata.get(trackId)
+    let needsMetadata = source == .genius || source == .lrclib || source == .petit || source == .netease
+    if metadata == nil, source != .automatic, let token = spotifyAccessToken {
+        metadata = fetchTrackDetails(trackId: trackId, token: token)
     }
-
-    // 2. Try statefulPlayer (most reliable on modern Spotify)
-    if !hasMetadata {
-        if let player = statefulPlayer,
-           let track = player.currentTrack() {
-            let currentId = track.URI().spt_trackIdentifier()
-
-            if currentId == trackId {
-                currentTitle = track.trackTitle()
-                currentArtist = track.artistName()
-                hasMetadata = true
-                capturedTrackId = trackId
-                capturedTrackTitle = currentTitle
-                capturedArtistName = currentArtist
-            }
-        }
-    }
-
-    // 3. MPNowPlayingInfoCenter — must be read on the main thread.
-    // It always describes the playing track, so it must not be used for another track
-    // (Spotify also loads lyrics for tracks that aren't playing yet).
-    let nowPlayingIsThisTrack = KaraokePlaybackTracker.shared.playerReportedTrackId().map { $0 == trackId } ?? true
-    if !hasMetadata && nowPlayingIsThisTrack {
-        var npTitle: String? = nil
-        var npArtist: String? = nil
-        if Thread.isMainThread {
-            npTitle = MPNowPlayingInfoCenter.default().nowPlayingInfo?[MPMediaItemPropertyTitle] as? String
-            npArtist = MPNowPlayingInfoCenter.default().nowPlayingInfo?[MPMediaItemPropertyArtist] as? String
-        } else {
-            DispatchQueue.main.sync {
-                npTitle = MPNowPlayingInfoCenter.default().nowPlayingInfo?[MPMediaItemPropertyTitle] as? String
-                npArtist = MPNowPlayingInfoCenter.default().nowPlayingInfo?[MPMediaItemPropertyArtist] as? String
-            }
-        }
-        if let title = npTitle, let artist = npArtist, !title.isEmpty, !artist.isEmpty {
-            currentTitle = title
-            currentArtist = artist
-            hasMetadata = true
-            capturedTrackId = trackId
-            capturedTrackTitle = title
-            capturedArtistName = artist
-        }
-    }
-
-    // 4. Spotify Web API fallback using captured Bearer token
-    if !hasMetadata, let token = spotifyAccessToken {
-        if let info = fetchTrackDetails(trackId: trackId, token: token) {
-            currentTitle = info.title
-            currentArtist = info.artist
-            hasMetadata = true
-            capturedTrackId = trackId
-            capturedTrackTitle = currentTitle
-            capturedArtistName = currentArtist
-        }
-    }
+    let currentTitle = metadata?.title, currentArtist = metadata?.artist
+    let hasMetadata = metadata != nil
+    if let metadata { LyricsTrackMetadata.set(trackId, title: metadata.title, artist: metadata.artist) }
 
     if needsMetadata && !hasMetadata {
         writeDebugLog("[Lyrics] \(trackId): no title/artist for \(source.description), cannot search")
@@ -114,6 +70,8 @@ private func loadCustomLyricsForTrackId(_ trackId: String, source requestedSourc
         repository = MusixmatchLyricsRepository.shared
     case .petit:
         repository = petitLyricsRepository
+    case .automatic:
+        repository = AutomaticLyricsRepository.shared
     case .spicylyrics:
         repository = SpicyLyricsRepository.shared
     case .appleMusic:
@@ -171,7 +129,7 @@ private func loadCustomLyricsForTrackId(_ trackId: String, source requestedSourc
 
         // Attempt Genius fallback if enabled and the primary source isn't already Genius.
         // Genius requires title + artist to search — only attempt if we have them.
-        let canFallbackToGenius = source != .genius
+        let canFallbackToGenius = source != .genius && source != .automatic
             && UserDefaults.lyricsOptions.geniusFallback
             && !(currentTitle ?? "").isEmpty
             && !(currentArtist ?? "").isEmpty
@@ -206,7 +164,7 @@ private func loadCustomLyricsForTrackId(_ trackId: String, source requestedSourc
 private func publishLineSyncedKaraokeLyrics(_ dto: LyricsDto, trackId: String, source: LyricsSource) {
     guard source.supportsCustomLyricsView, !trackId.isEmpty,
           KaraokeLyricsStore.shared.lyrics(forTrackId: trackId) == nil else { return }
-    guard let karaoke = KaraokeLyricsDto.lineSynced(from: dto, providerName: dto.providerCredit ?? source.description) else { return }
+    guard let karaoke = dto.karaoke ?? KaraokeLyricsDto.lineSynced(from: dto, providerName: dto.providerCredit ?? source.description) else { return }
     KaraokeLyricsStore.shared.set(trackId: trackId, source: source, lyrics: karaoke)
 }
 
@@ -227,6 +185,9 @@ private func loadCustomLyricsForCurrentTrack() throws -> Lyrics {
         primaryArtist: artistName,
         spotifyTrackId: track.trackIdentifier
     )
+    var lyricsState = LyricsLoadingState()
+    publishLoadingState(lyricsState, trackId: searchQuery.spotifyTrackId)
+    defer { publishLoadingState(lyricsState, trackId: searchQuery.spotifyTrackId) }
     
     let options = UserDefaults.lyricsOptions
     var source = UserDefaults.lyricsSource
@@ -243,6 +204,8 @@ private func loadCustomLyricsForCurrentTrack() throws -> Lyrics {
         repository = MusixmatchLyricsRepository.shared
     case .petit:
         repository = petitLyricsRepository
+    case .automatic:
+        repository = AutomaticLyricsRepository.shared
     case .spicylyrics:
         repository = SpicyLyricsRepository.shared
     case .appleMusic:
@@ -300,7 +263,7 @@ private func loadCustomLyricsForCurrentTrack() throws -> Lyrics {
             lyricsState.fallbackError = .unknownError
         }
         
-        if source == .genius || !UserDefaults.lyricsOptions.geniusFallback {
+        if source == .automatic || source == .genius || !UserDefaults.lyricsOptions.geniusFallback {
             throw error
         }
         
@@ -390,11 +353,7 @@ func getLyricsDataForCurrentTrack(_ originalPath: String, originalLyrics: Lyrics
     // The player observer doesn't attach on 9.1.x, so the lyrics request is the current-track signal.
     KaraokePlaybackTracker.shared.updateTrackIdFromLyricsFetch(trackIdentifier)
 
-    if capturedTrackId != trackIdentifier {
-        capturedTrackTitle = nil
-        capturedArtistName = nil
-        capturedTrackId = nil
-    }
+
 
     let fetch = lyricsFetch(trackId: trackIdentifier)
     // Never block UIKit: metadata fallback can itself need the main queue.

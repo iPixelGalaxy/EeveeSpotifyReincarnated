@@ -29,20 +29,24 @@ final class KaraokeLyricsStore {
 
     private let lock = NSLock()
     private var cache: [String: KaraokeLyricsDto] = [:]
+    private var revisions: [String: UInt64] = [:]
+    private var revision: UInt64 = 0
     private var order: [String] = []
     private let capacity = 8
 
     private init() {}
 
-    func set(trackId: String, source: LyricsSource, lyrics: KaraokeLyricsDto) {
-        guard !trackId.isEmpty, source == UserDefaults.lyricsSource else { return }
+    @discardableResult func set(trackId: String, source: LyricsSource, lyrics: KaraokeLyricsDto) -> KaraokeLyricsDto {
+        guard !trackId.isEmpty, source == UserDefaults.lyricsSource else { return lyrics }
         lock.lock()
         cache[trackId] = lyrics
+        revision &+= 1; revisions[trackId] = revision
         order.removeAll { $0 == trackId }
         order.append(trackId)
-        if order.count > capacity { cache[order.removeFirst()] = nil }
+        if order.count > capacity { let id = order.removeFirst(); cache[id] = nil; revisions[id] = nil }
         lock.unlock()
         notify()
+        return lyrics
     }
 
     /// Drops a track's entry. Called before every fresh fetch so a result from an
@@ -52,6 +56,7 @@ final class KaraokeLyricsStore {
         guard !trackId.isEmpty else { return }
         lock.lock()
         let hadEntry = cache.removeValue(forKey: trackId) != nil
+        revisions[trackId] = nil
         order.removeAll { $0 == trackId }
         lock.unlock()
         if hadEntry { notify() }
@@ -61,6 +66,11 @@ final class KaraokeLyricsStore {
         lock.lock()
         defer { lock.unlock() }
         return cache[trackId]
+    }
+    func snapshot(forTrackId trackId: String) -> (lyrics: KaraokeLyricsDto, revision: UInt64)? {
+        lock.lock(); defer { lock.unlock() }
+        guard let lyrics = cache[trackId], let revision = revisions[trackId] else { return nil }
+        return (lyrics, revision)
     }
 
     func clear() {

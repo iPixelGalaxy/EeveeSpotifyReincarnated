@@ -608,3 +608,14 @@ karaoke_release_year_off = "Off";
 karaoke_release_year_beforeArtist = "Before artist";
 karaoke_release_year_afterArtist = "After artist";
 karaoke_landscape_canvas_detail = "Play Canvas video in place of the cover and use its colors behind lyrics in landscape. Tracks without Canvas keep their artwork.";
+
+lyrics_sources_automatic = "Automatic";
+lyrics_sources_manage = "Lyrics sources";
+lyrics_sources_order_hint = "Enable sources and edit their priority. Defaults match Spicy Lyrics: Spicy, Musixmatch, Apple Music and Spotify enabled; LRCLIB and NetEase disabled.";
+lyrics_sources_rating = "Quality rating";
+lyrics_sources_rating_hint = "The highest rating wins. Source priority breaks ties. Lyrics appear as soon as a timed source responds, then improve when richer timing arrives.";
+lyrics_sources_word = "Word synced";
+lyrics_sources_line = "Line synced";
+lyrics_sources_plain = "Unsynced";
+lyrics_sources_apple_quality = "Prefer Apple Music timing quality";
+lyrics_sources_reset = "Reset source defaults";
