@@ -133,7 +133,7 @@ private struct KaraokeScrollingLines: View {
         let lead = options.scrollLeadMs.isFinite ? min(800, max(0, options.scrollLeadMs)) : 250
         let clock = currentMs + Int(lead)
         let foreground = layouts.indices.filter { !layouts[$0].isBackground && !layouts[$0].isInterlude }
-        return foreground.first { layouts[$0].startMs <= clock && clock < layouts[$0].endMs }
+        return foreground.last { layouts[$0].startMs <= clock && clock < layouts[$0].endMs }
             ?? foreground.first { layouts[$0].startMs > clock }
             ?? foreground.last
     }

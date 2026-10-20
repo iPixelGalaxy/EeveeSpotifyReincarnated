@@ -308,6 +308,9 @@ struct EeveeSpotify: Tweak {
         }
 
         if EeveeSpotify.hookTarget == .v91 {
+            if NSClassFromString("SPTOauthAccessTokenImpl") != nil {
+                SpotifyMetadataAuthenticationGroup().activate()
+            }
 
             if UserDefaults.patchType.isPatching {
                 PremiumBootstrapGroup().activate()

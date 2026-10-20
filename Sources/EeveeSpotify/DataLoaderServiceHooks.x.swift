@@ -14,19 +14,21 @@ var spotifyAccessToken: String? {
     accessTokenLock.lock(); defer { accessTokenLock.unlock() }; return storedAccessToken
 }
 
+func captureSpotifyAccessToken(_ token: String?) {
+    guard let token, !token.isEmpty else { return }
+    accessTokenLock.lock()
+    let first = storedAccessToken == nil
+    storedAccessToken = token
+    accessTokenLock.unlock()
+    if first { writeDebugLog("[Metadata] Native access token available") }
+}
+
 func captureAccessToken(from request: URLRequest?) {
     if let client = request?.value(forHTTPHeaderField: "client-token") {
         accessTokenLock.lock(); storedClientToken = client; accessTokenLock.unlock()
     }
     guard let auth = request?.value(forHTTPHeaderField: "Authorization"), auth.hasPrefix("Bearer ") else { return }
-    let token = String(auth.dropFirst(7))
-    accessTokenLock.lock()
-    let first = storedAccessToken == nil
-    if storedAccessToken != token { storedAccessToken = token }
-    accessTokenLock.unlock()
-    if first {
-        eeveeLog("[EeveeSpotify][TokenCapture] First token, len %d from %@%@", token.count, request?.url?.host ?? "?", request?.url?.path ?? "")
-    }
+    captureSpotifyAccessToken(String(auth.dropFirst(7)))
 }
 
 // Spotify's primary URLSession delegate; patching is shared with HttpClientURLSessionHook via SpotifyResponsePatcher.
