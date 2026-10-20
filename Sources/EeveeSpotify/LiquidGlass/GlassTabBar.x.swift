@@ -177,6 +177,13 @@ enum GlassTabBar {
         return platter.convert(platter.bounds, to: window)
     }
 
+    static func capsuleThickness(in window: UIWindow) -> CGFloat? {
+        guard let stock, let bar = objc_getAssociatedObject(stock, &barKey) as? GlassSystemTabBar,
+              bar.window === window, let platter = platter(in: bar), platter.bounds.height >= 30 else { return nil }
+        // Bounds retain the portrait thickness while UIKit rotates the view's frame.
+        return platter.bounds.height
+    }
+
     static func didLayoutSystemBar(_ bar: GlassSystemTabBar) {
         guard let window = bar.window, window.bounds.width <= window.bounds.height,
               let frame = capsuleFrame(in: window), frame != lastCapsuleFrame else { return }

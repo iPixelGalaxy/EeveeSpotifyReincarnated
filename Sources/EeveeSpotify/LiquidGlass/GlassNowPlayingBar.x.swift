@@ -225,3 +225,18 @@ class GlassNowPlayingBarHook: ClassHook<UIViewController> {
         GlassNowPlayingBar.meter.measure { GlassNowPlayingBar.style(container) }
     }
 }
+
+// This page wrapper retains its old horizontal frame after the visible card moves.
+// Its hosted background must not intercept rows above the relocated player.
+class LandscapePlayerPassthroughHook: ClassHook<UIView> {
+    typealias Group = GlassNowPlayingBarGroup
+    static let targetName = "_TtC22NowPlaying_BarPageImplP33_CCC0D2EEA6D4725EECD8965E8C38C86D20TouchPassthroughView"
+
+    @objc(hitTest:withEvent:) func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        if #available(iOS 26.0, *), let window = target.window,
+           LandscapeNavigation.acceptsPlayerHit(at: target.convert(point, to: window), in: window) == false {
+            return nil
+        }
+        return orig.hitTest(point, with: event)
+    }
+}

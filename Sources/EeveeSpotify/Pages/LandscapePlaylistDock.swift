@@ -37,10 +37,12 @@ final class LandscapePlaylistDock {
         }
     }
 
-    func layout(_ controller: UIViewController, in window: UIWindow, host: UIView) {
+    func layout(_ controller: UIViewController, in window: UIWindow) {
         guard let frames = LandscapeNavigation.playlistDock(in: window),
               let navigation = controller.navigationController,
-              navigation.navigationBar.window === window else { return }
+              navigation.navigationBar.window === window,
+              let host = LandscapeNavigation.playerControlsHost(in: window)
+                  ?? window.rootViewController?.viewIfLoaded else { return }
         let sourceBar = navigation.navigationBar
         if bar !== sourceBar { restore(); bar = sourceBar; barAlpha = sourceBar.alpha; barHidden = sourceBar.isHidden }
         self.navigation = navigation

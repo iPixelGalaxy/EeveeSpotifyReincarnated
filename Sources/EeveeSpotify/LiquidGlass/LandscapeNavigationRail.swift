@@ -135,6 +135,16 @@ final class LandscapeNavigationRail: UIView {
         let selected = index == previewIndex
         let color: UIColor = selected ? tint : .white
         let symbol = selected ? item.selectedImage ?? item.image : item.image
+        let font = UIFont.systemFont(ofSize: 10, weight: .medium)
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.alignment = .center
+        paragraph.lineBreakMode = .byWordWrapping
+        let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color, .paragraphStyle: paragraph]
+        let labelHeight = item.title.map {
+            min(ceil(font.lineHeight * 2), ceil(($0 as NSString).boundingRect(
+                with: CGSize(width: imageSize.width, height: .greatestFiniteMagnitude),
+                options: [.usesLineFragmentOrigin, .usesFontLeading], attributes: attributes, context: nil).height))
+        } ?? 0
         let renderer = UIGraphicsImageRenderer(size: CGSize(width: imageSize.height, height: imageSize.width))
         let image = renderer.image { context in
             let drawing = context.cgContext
@@ -142,12 +152,12 @@ final class LandscapeNavigationRail: UIView {
             drawing.rotate(by: -.pi / 2)
             drawing.translateBy(x: -imageSize.width / 2, y: -imageSize.height / 2)
             let icon: CGFloat = 23
-            let top = max(0, (imageSize.height - icon - 18) / 2)
+            let gap: CGFloat = labelHeight > 0 ? 4 : 0
+            let top = max(0, (imageSize.height - icon - gap - labelHeight) / 2)
             symbol?.withTintColor(color, renderingMode: .alwaysOriginal).draw(in: CGRect(x: (imageSize.width - icon) / 2, y: top, width: icon, height: icon))
             if let title = item.title {
-                let paragraph = NSMutableParagraphStyle(); paragraph.alignment = .center; paragraph.lineBreakMode = .byTruncatingTail
-                (title as NSString).draw(in: CGRect(x: 0, y: top + icon + 4, width: imageSize.width, height: 16),
-                                         withAttributes: [.font: UIFont.systemFont(ofSize: 10, weight: .medium), .foregroundColor: color, .paragraphStyle: paragraph])
+                (title as NSString).draw(with: CGRect(x: 0, y: top + icon + gap, width: imageSize.width, height: labelHeight),
+                                        options: [.usesLineFragmentOrigin, .usesFontLeading], attributes: attributes, context: nil)
             }
         }
         segments.setImage(image.withRenderingMode(.alwaysOriginal), forSegmentAt: index)

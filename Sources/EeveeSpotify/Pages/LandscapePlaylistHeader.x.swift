@@ -158,7 +158,7 @@ enum LandscapePlaylistHeader {
             let actionY = summary.frame.maxY + 10
             if let actions { actions.frame = CGRect(x: 0, y: actionY, width: width, height: actions.compactHeight) }
             sidebar.contentSize = CGSize(width: width, height: actionY + (actions?.compactHeight ?? 0) + 8)
-            if let controller = root.next as? UIViewController { dock.layout(controller, in: window, host: root) }
+            if let controller = root.next as? UIViewController { dock.layout(controller, in: window) }
 
         }
     }
@@ -328,6 +328,14 @@ enum LandscapePlaylistHeader {
         }
         page.bind(row, header: header)
         return true
+    }
+
+    static func layoutDock(in window: UIWindow) {
+        for root in pages.allObjects where root.window === window {
+            guard let page = objc_getAssociatedObject(root, &pageKey) as? Page, page.visible,
+                  let controller = root.next as? UIViewController else { continue }
+            page.dock.layout(controller, in: window)
+        }
     }
 
     static func pointInside(_ view: UIView) -> Bool? {

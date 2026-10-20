@@ -9,6 +9,7 @@ enum LandscapeNavigation {
     private static var player: NativeViewPlacement?
     private static var rail: LandscapeNavigationRail?
     private static weak var playlist: UIView?
+    private static var portraitThickness: CGFloat = 56
     private static var lastWindowSize: CGSize?
     private static weak var surface: UIView?
     private static var surfaceRadius: CGFloat = 0
@@ -20,13 +21,15 @@ enum LandscapeNavigation {
     private static var originalRightInset: CGFloat = 0
     private struct ClipState { weak var view: UIView?; let clips: Bool }
     private static var clipping: [ObjectIdentifier: ClipState] = [:]
+    private struct InteractionState { weak var view: UIView?; let enabled: Bool }
+    private static var inactiveFooters: [ObjectIdentifier: InteractionState] = [:]
 
     private static func frames(_ window: UIWindow) -> (rail: CGRect, player: CGRect)? {
         guard window.bounds.width > window.bounds.height else { return nil }
         let safe = window.safeAreaLayoutGuide.layoutFrame
         let gap = max(8, (window.safeAreaInsets.right + 8) / 2)
         let nativeHeight = min(84, max(56, bar?.bounds.height ?? 76))
-        let width = nativeHeight * 1.5 * 0.8
+        let width = portraitThickness
         let count = max(1, bar?.items?.count ?? 4)
         let height = min(window.bounds.height - 16, CGFloat(count) * nativeHeight + CGFloat(count - 1) * 4 + 12)
         let rail = CGRect(x: window.bounds.maxX - gap - width, y: (window.bounds.height - height) / 2, width: width, height: height)
@@ -111,6 +114,7 @@ enum LandscapeNavigation {
     static func didLayoutBar(_ bar: UIView, in stock: UIView) {
         guard let bar = bar as? GlassSystemTabBar, let window = stock.window else { return }
         self.stock = stock; self.bar = bar
+        if let thickness = GlassTabBar.capsuleThickness(in: window) { portraitThickness = max(44, thickness) }
         guard let layout = frames(window), let owner = window.rootViewController,
               let host = owner.viewIfLoaded else { restore(); return }
         // UIKit owns the window root's frame, transform and constraints during rotation.
@@ -130,6 +134,19 @@ enum LandscapeNavigation {
         if abs(insets.right - right) > 0.5 { insets.right = right; owner.additionalSafeAreaInsets = insets }
         // Keep the model and its existing navigation actions; display them in a bounded rail.
         bar.layer.removeAllAnimations(); bar.alpha = 0; bar.isUserInteractionEnabled = false
+        // The hidden horizontal bar and its stack still cover playlist rows unless their
+        // entire footer branch stops accepting touches. Never disable a page/controller root.
+        var footer: UIView? = stock
+        while let view = footer, view !== host, view.bounds.height <= max(120, stock.bounds.height + 8),
+              playerCard?.isDescendant(of: view) != true {
+            if view !== stock, view.next is UIViewController { break }
+            let key = ObjectIdentifier(view)
+            if inactiveFooters[key]?.view !== view {
+                inactiveFooters[key] = InteractionState(view: view, enabled: view.isUserInteractionEnabled)
+            }
+            view.isUserInteractionEnabled = false
+            footer = view.superview
+        }
         let rail = self.rail ?? LandscapeNavigationRail(frame: .zero)
         self.rail = rail
         if rail.superview !== host { host.addSubview(rail) }
@@ -157,6 +174,7 @@ enum LandscapeNavigation {
         }
         if let parent = card.superview { overflow(parent) }
         card.setNeedsLayout()
+        LandscapePlaylistHeader.layoutDock(in: window)
     }
 
     private static func restoreContentInset() {
@@ -170,6 +188,9 @@ enum LandscapeNavigation {
 
     private static func restore() {
         restoreContentInset()
+        let footers = inactiveFooters
+        inactiveFooters.removeAll()
+        for state in footers.values { state.view?.isUserInteractionEnabled = state.enabled }
         lastWindowSize = nil
         player?.restore(); player = nil
         rail?.removeFromSuperview(); rail = nil
@@ -183,6 +204,15 @@ enum LandscapeNavigation {
     }
 
     static func playbackFrame(in window: UIWindow) -> CGRect? { frames(window)?.player }
+
+    static func playerControlsHost(in window: UIWindow) -> UIView? {
+        playerHost?.window === window ? playerHost : nil
+    }
+
+    static func acceptsPlayerHit(at point: CGPoint, in window: UIWindow) -> Bool? {
+        guard let layout = frames(window) else { return nil }
+        return playerHitFrame(in: window, fallback: layout.player).contains(point)
+    }
 
     static func swipeStartRegion(in window: UIWindow) -> CGRect {
         if let layout = frames(window) {
