@@ -48,7 +48,7 @@ enum KaraokeFooterButton {
 
     static func attach(to root: UIView, isDJ: Bool = false) {
         _ = observer
-        KaraokeOverlayPresenter.registerPlayer(root)
+        KaraokeOverlayPresenter.registerPlayer(root, isDJ: isDJ)
         if isDJ {
             row = nil
             if button.superview !== root { button.removeFromSuperview(); root.addSubview(button) }

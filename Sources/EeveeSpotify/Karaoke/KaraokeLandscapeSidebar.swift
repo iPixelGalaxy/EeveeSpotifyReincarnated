@@ -2,7 +2,7 @@ import UIKit
 
 /// Position Spotify's live units while preserving their view and controller ownership.
 final class KaraokeLandscapeSidebar: UIScrollView {
-    enum Unit: Int, CaseIterable { case information, duration, controls }
+    enum Unit: Int, CaseIterable { case information, duration, controls, dj }
     struct Geometry {
         let frame: CGRect
         let bounds: CGRect
@@ -28,8 +28,26 @@ final class KaraokeLandscapeSidebar: UIScrollView {
             native = NativeViewPlacement(source)
         }
     }
-    private struct ClipState { weak var view: UIView?; let clips: Bool }
-    private var clipping: [ObjectIdentifier: ClipState] = [:]
+    private struct ViewState {
+        weak var view: UIView?
+        let clips: Bool
+        let alpha: CGFloat
+        let hidden: Bool
+        let interactive: Bool
+        let accessibilityHidden: Bool
+        var desiredClips: Bool
+        init(_ view: UIView, clips: Bool) {
+            self.view = view; self.clips = view.clipsToBounds; alpha = view.alpha
+            hidden = view.isHidden; interactive = view.isUserInteractionEnabled
+            accessibilityHidden = view.accessibilityElementsHidden; desiredClips = clips
+        }
+        func restore() {
+            guard let view else { return }
+            view.clipsToBounds = clips; view.alpha = alpha; view.isHidden = hidden
+            view.isUserInteractionEnabled = interactive; view.accessibilityElementsHidden = accessibilityHidden
+        }
+    }
+    private var visibility: [ObjectIdentifier: ViewState] = [:]
     private var placements: [Unit: Placement] = [:]
     private var applying = false
     private var restored = false
@@ -63,23 +81,48 @@ final class KaraokeLandscapeSidebar: UIScrollView {
         applying = true
         defer { applying = false }
         // A retired unit is never inserted back into Spotify's hierarchy.
-        placements.removeValue(forKey: unit)?.native.restore()
+        let retired = placements.removeValue(forKey: unit)
+        releaseRetiredVisibility()
+        retired?.native.restore()
         guard let placement = Placement(source: root, heightLimit: max(200, bounds.height)) else { return }
         placements[unit] = placement
-        if let view = placement.view {
-            let key = ObjectIdentifier(view)
-            if clipping[key]?.view !== view { clipping[key] = ClipState(view: view, clips: view.clipsToBounds) }
-            view.clipsToBounds = true
-        }
+        if let view = placement.view { pinVisibility(view, clips: true) }
         var ancestor = placement.view?.superview
-        while let view = ancestor, !(view is UIWindow) {
-            let key = ObjectIdentifier(view)
-            if clipping[key]?.view !== view { clipping[key] = ClipState(view: view, clips: view.clipsToBounds) }
-            view.clipsToBounds = false
+        while let view = ancestor, !(view is UIWindow), !isDescendant(of: view) {
+            pinVisibility(view, clips: false)
             ancestor = view.superview
         }
         setNeedsLayout()
         writeDebugLog("[Karaoke][landscape] positioned \(unit), native ownership retained")
+    }
+
+    private func pinVisibility(_ view: UIView, clips: Bool) {
+        let key = ObjectIdentifier(view)
+        if visibility[key]?.view !== view { visibility[key] = ViewState(view, clips: clips) }
+        visibility[key]?.desiredClips = clips
+        view.alpha = 1; view.isHidden = false; view.isUserInteractionEnabled = true
+        view.accessibilityElementsHidden = false; view.clipsToBounds = clips
+    }
+
+    private func releaseRetiredVisibility() {
+        for (key, state) in visibility {
+            let used = state.view.map { view in
+                placements.values.contains { $0.source?.isDescendant(of: view) == true }
+            } ?? false
+            if !used {
+                visibility.removeValue(forKey: key)
+                state.restore()
+            }
+        }
+    }
+
+    func keepsVisible(_ view: UIView) -> Bool {
+        !restored && visibility[ObjectIdentifier(view)]?.view === view
+    }
+
+    func requiredClipping(for view: UIView) -> Bool? {
+        guard keepsVisible(view) else { return nil }
+        return visibility[ObjectIdentifier(view)]?.desiredClips
     }
 
     func geometry(for view: UIView) -> Geometry? {
@@ -89,7 +132,7 @@ final class KaraokeLandscapeSidebar: UIScrollView {
 
     func nativeHit(at point: CGPoint, in window: UIWindow, event: UIEvent?) -> UIView? {
         guard convert(bounds, to: window).contains(point) else { return nil }
-        for unit in [Unit.controls, .duration, .information] {
+        for unit in [Unit.controls, .dj, .duration, .information] {
             if let row = placements[unit], row.source?.window === window, let view = row.view,
                let hit = NativeHitRouter.hit(view, at: point, in: window, event: event) { return hit }
         }
@@ -123,8 +166,8 @@ final class KaraokeLandscapeSidebar: UIScrollView {
         restored = true
         refresh?.invalidate(); refresh = nil
         for unit in Unit.allCases.reversed() { placements.removeValue(forKey: unit)?.native.restore() }
-        for state in clipping.values { state.view?.clipsToBounds = state.clips }
-        clipping.removeAll()
+        for state in visibility.values { state.restore() }
+        visibility.removeAll()
         removeFromSuperview()
     }
     deinit { refresh?.invalidate() }

@@ -12,6 +12,7 @@ final class KaraokeOverlayPresenter {
     private static weak var canvas: UIView?
     private static weak var djCanvas: UIView?
     private static weak var djHead: UIViewController?
+    private static weak var djFooter: UIView?
     private static weak var header: UIView?
     private static weak var information: UIView?
     private static weak var footer: UIView?
@@ -20,6 +21,7 @@ final class KaraokeOverlayPresenter {
     private static let viewport = KaraokeViewport()
     private static var landscapeSidebar: KaraokeLandscapeSidebar?
     private static var updatingFrame = false
+    private static var geometryUpdateScheduled = false
     private static var wideClipping: [ObjectIdentifier: VideoState] = [:]
     private static weak var positionedHeader: UIView?
     private static var headerBaseTransform = CGAffineTransform.identity
@@ -84,12 +86,15 @@ final class KaraokeOverlayPresenter {
     private static var compactVisibility: [ObjectIdentifier: VideoState] = [:]
 
     static func lockedCompactAlpha(_ value: CGFloat, in view: UIView) -> CGFloat {
-        objc_getAssociatedObject(view, &compactVisibilityKey) == nil ? value : 1
+        if landscapeSidebar?.keepsVisible(view) == true { return 1 }
+        return objc_getAssociatedObject(view, &compactVisibilityKey) == nil ? value : 1
     }
     static func lockedCompactHidden(_ value: Bool, in view: UIView) -> Bool {
-        objc_getAssociatedObject(view, &compactVisibilityKey) == nil ? value : false
+        if landscapeSidebar?.keepsVisible(view) == true { return false }
+        return objc_getAssociatedObject(view, &compactVisibilityKey) == nil ? value : false
     }
     static func lockedCompactClipping(_ value: Bool, in view: UIView) -> Bool {
+        if let clips = landscapeSidebar?.requiredClipping(for: view) { return clips }
         if wideClipping[ObjectIdentifier(view)]?.view === view { return false }
         return objc_getAssociatedObject(view, &compactVisibilityKey) == nil ? value : false
     }
@@ -121,6 +126,7 @@ final class KaraokeOverlayPresenter {
     }
     private static var canHideFooter: Bool {
         guard let footer else { return false }
+        if isLandscape, djHead != nil, footer === djFooter { return false }
         return controls?.isDescendant(of: footer) != true
     }
     private static func dismissalBand() -> CGRect? {
@@ -320,6 +326,7 @@ final class KaraokeOverlayPresenter {
         guard djHead === controller else { return }
         if canvas === djCanvas { suspendPlayer() }
         djCanvas = nil; djHead = nil
+        djFooter = nil
     }
 
     static func suspendPlayer() {
@@ -568,12 +575,15 @@ final class KaraokeOverlayPresenter {
 
     static let coverClass = "_TtC35NowPlaying_ContentLayerPlatformImpl24AccessibleCollectionView"
 
-    static func registerPlayer(_ root: UIView) {
+    static func registerPlayer(_ root: UIView, isDJ: Bool = false) {
+        if isDJ { djFooter = root }
+        if djHead != nil, !isDJ { return }
         if focused, nativeStates[ObjectIdentifier(root)]?.view !== root { nativeStates[ObjectIdentifier(root)] = NativeState(root) }
         footer = root
         if isPresented {
             root.alpha = (focused || isLandscape) && canHideFooter ? 0 : 1
             root.isUserInteractionEnabled = !(focused || isLandscape) || !canHideFooter
+            updateFrame()
         }
         restoreIfNeeded()
     }
@@ -742,6 +752,28 @@ final class KaraokeOverlayPresenter {
         }
     }
 
+    static func scheduleGeometryUpdate() {
+        guard isEnabled, !suspended, !geometryUpdateScheduled else { return }
+        geometryUpdateScheduled = true
+        DispatchQueue.main.async {
+            geometryUpdateScheduled = false
+            guard isEnabled, !suspended else { return }
+            if isPresented {
+                let changedOrientation = viewport.landscape != isLandscape
+                updateFrame()
+                if changedOrientation { interact() }
+            } else { restoreIfNeeded() }
+        }
+    }
+
+    static func playerWillTransition(_ controller: UIViewController, with coordinator: UIViewControllerTransitionCoordinator) {
+        guard isEnabled, !suspended, let canvas, let root = controller.viewIfLoaded,
+              canvas.isDescendant(of: root) else { return }
+        scheduleGeometryUpdate()
+        coordinator.animate(alongsideTransition: { _ in scheduleGeometryUpdate() },
+                            completion: { _ in scheduleGeometryUpdate() })
+    }
+
     private static func updateFrame() {
         guard !updatingFrame else { return }
         updatingFrame = true
@@ -763,6 +795,7 @@ final class KaraokeOverlayPresenter {
             sidebar.attach(information, as: .information)
             sidebar.attach(duration, as: .duration)
             sidebar.attach(controls, as: .controls)
+            sidebar.attach(djHead != nil ? djFooter : nil, as: .dj)
             // attach() and frame changes already schedule layout. Forcing it from native unit
             // layout callbacks starts another layout pass while UIKit is still sizing those units.
             if canHideFooter { footer?.alpha = 0; footer?.isUserInteractionEnabled = false }
@@ -864,6 +897,7 @@ final class KaraokeOverlayPresenter {
         child.overrideUserInterfaceStyle = .dark
         child.view.backgroundColor = .clear
         let plane = KaraokeCanvasContainer(frame: canvas.bounds)
+        plane.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         plane.activeRect = frame
         plane.clipsToBounds = true
         plane.backgroundColor = .black
@@ -949,6 +983,22 @@ final class KaraokeOverlayPresenter {
 private final class KaraokeCanvasContainer: UIView {
     var activeRect = CGRect.zero
     weak var sidebar: UIView?
+    private var previousBounds = CGRect.null
+    private var previousWindowBounds = CGRect.null
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        let windowBounds = window?.bounds ?? .zero
+        guard bounds != previousBounds || windowBounds != previousWindowBounds else { return }
+        previousBounds = bounds; previousWindowBounds = windowBounds
+        KaraokeOverlayPresenter.scheduleGeometryUpdate()
+    }
+
+    override func safeAreaInsetsDidChange() {
+        super.safeAreaInsetsDidChange()
+        KaraokeOverlayPresenter.scheduleGeometryUpdate()
+    }
+
     override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
         activeRect.contains(point) || sidebar?.frame.contains(point) == true
     }
