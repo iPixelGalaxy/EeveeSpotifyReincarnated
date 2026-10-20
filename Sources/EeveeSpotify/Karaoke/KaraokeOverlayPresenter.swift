@@ -61,6 +61,23 @@ final class KaraokeOverlayPresenter {
         }
     }
     private static var videoStates: [ObjectIdentifier: VideoState] = [:]
+    private static var canvasHeaderState: VideoState?
+
+    static func refreshCanvasChrome() {
+        let active = landscapeSidebar?.canvasActive == true
+        if !active || canvasHeaderState?.view !== header {
+            if let saved = canvasHeaderState, let view = saved.view {
+                view.alpha = 1; view.isUserInteractionEnabled = saved.interactive
+                view.accessibilityElementsHidden = saved.accessibilityHidden
+            }
+            canvasHeaderState = nil
+        }
+        guard active, let header else { return }
+        if canvasHeaderState == nil { canvasHeaderState = VideoState(header) }
+        let idle = landscapeSidebar?.canvasIdle == true
+        header.alpha = idle ? 0 : 1; header.isUserInteractionEnabled = !idle
+        header.accessibilityElementsHidden = idle
+    }
     private static var nativeTouchActive = false
     private static var compactTouch = false
     private static var focusHeartbeat: DispatchSourceTimer?
@@ -90,6 +107,8 @@ final class KaraokeOverlayPresenter {
 
     static func lockedCompactAlpha(_ value: CGFloat, in view: UIView) -> CGFloat {
         if PlayerDeclutter.lyricsKeepsHidden(view) { return 0 }
+        if view === header, landscapeSidebar?.canvasIdle == true { return 0 }
+        if let alpha = landscapeSidebar?.canvasAlpha(for: view) { return alpha }
         if landscapeSidebar?.keepsVisible(view) == true { return 1 }
         return objc_getAssociatedObject(view, &compactVisibilityKey) == nil ? value : 1
     }
@@ -186,6 +205,7 @@ final class KaraokeOverlayPresenter {
     static func nativeTouchBegan(_ touch: UITouch) -> Bool {
         guard isPresented else { return false }
         if let touched = touch.view, let hosted = hosting?.view, touched.isDescendant(of: hosted) { return false }
+        landscapeSidebar?.beginCanvasInteraction()
         nativeTouchActive = true
         compactTouch = focused && touch.view.map { touched in controls.map { touched.isDescendant(of: $0) } ?? false } == true
         idleWork?.cancel()
@@ -194,6 +214,7 @@ final class KaraokeOverlayPresenter {
     }
     static func nativeTouchEnded() {
         nativeTouchActive = false
+        landscapeSidebar?.endCanvasInteraction()
         let keepCompact = compactTouch && focused
         compactTouch = false
         writeDebugLog("[Karaoke][touch] native control ended; compact=\(keepCompact)")

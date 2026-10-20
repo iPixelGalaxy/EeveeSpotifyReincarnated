@@ -52,6 +52,7 @@ struct KaraokeBackgroundView: View {
                         .ignoresSafeArea().background(Color.black)
                 }
             }
+            KaraokeCanvasBackdrop().ignoresSafeArea()
         }
         .allowsHitTesting(false)
         .onAppear { restart() }

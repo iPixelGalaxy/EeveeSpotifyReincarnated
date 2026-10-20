@@ -64,6 +64,12 @@ final class KaraokeLandscapeSidebar: UIScrollView {
     private var restored = false
     private let artwork = UIImageView()
     private var canvasStage: UIView?
+    private(set) var canvasActive = false
+    private(set) var canvasControlsVisible = true
+    private var canvasTouchActive = false
+    private var canvasIdleWork: DispatchWorkItem?
+    private var canvasButtons: [ObjectIdentifier: ViewState] = [:]
+    var canvasIdle: Bool { canvasActive && !canvasControlsVisible }
     private var refresh: Timer?
 
     init(frame: CGRect, host: UIViewController) {
@@ -82,7 +88,7 @@ final class KaraokeLandscapeSidebar: UIScrollView {
         addSubview(artwork)
         if #available(iOS 15.0, *) {
             let stage = KaraokeCanvasStageView(frame: bounds)
-            stage.visibilityChanged = { [weak self] visible in self?.artwork.isHidden = visible }
+            stage.visibilityChanged = { [weak self] visible in self?.setCanvasActive(visible) }
             insertSubview(stage, at: 0); canvasStage = stage
         }
         refresh = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
@@ -92,6 +98,71 @@ final class KaraokeLandscapeSidebar: UIScrollView {
         }
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    private func setCanvasActive(_ active: Bool) {
+        guard canvasActive != active else { return }
+        canvasActive = active; canvasControlsVisible = !active
+        canvasIdleWork?.cancel(); canvasTouchActive = false
+        isScrollEnabled = !active
+        artwork.isHidden = active
+        if !active {
+            canvasButtons.values.forEach { $0.restore() }; canvasButtons.removeAll()
+        }
+        setNeedsLayout()
+        KaraokeOverlayPresenter.refreshCanvasChrome()
+    }
+
+    func beginCanvasInteraction() {
+        guard canvasActive else { return }
+        canvasTouchActive = true; canvasIdleWork?.cancel()
+        setCanvasControlsVisible(true)
+    }
+
+    func endCanvasInteraction() {
+        guard canvasActive else { return }
+        canvasTouchActive = false; canvasIdleWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, !self.restored, self.canvasActive, !self.canvasTouchActive else { return }
+            self.setCanvasControlsVisible(false)
+        }
+        canvasIdleWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: work)
+    }
+
+    private func setCanvasControlsVisible(_ visible: Bool) {
+        guard canvasControlsVisible != visible else { return }
+        canvasControlsVisible = visible
+        UIView.animate(withDuration: 0.35, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction]) {
+            KaraokeOverlayPresenter.refreshCanvasChrome()
+            self.setNeedsLayout(); self.layoutIfNeeded()
+        }
+    }
+
+    private func updateCanvasButtons() {
+        guard canvasActive, let root = placements[.information]?.view else { return }
+        var candidates = root.subviews
+        while let view = candidates.popLast() {
+            let button = view is UIControl || view.accessibilityTraits.contains(.button)
+            let hasText = (view as? UILabel)?.text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+                || view.eeveeFirst(UILabel.self, where: { $0.text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false }) != nil
+            if button && !hasText {
+                let key = ObjectIdentifier(view)
+                if canvasButtons[key]?.view !== view { canvasButtons[key] = ViewState(view, clips: view.clipsToBounds) }
+            } else { candidates += view.subviews }
+        }
+        for state in canvasButtons.values {
+            state.view?.alpha = canvasIdle ? 0 : state.alpha
+            state.view?.isUserInteractionEnabled = !canvasIdle && state.interactive
+            state.view?.accessibilityElementsHidden = canvasIdle || state.accessibilityHidden
+        }
+    }
+
+    func canvasAlpha(for view: UIView) -> CGFloat? {
+        guard canvasIdle else { return nil }
+        if canvasButtons[ObjectIdentifier(view)]?.view === view { return 0 }
+        if [Unit.duration, .controls, .dj].contains(where: { placements[$0]?.view === view }) { return 0 }
+        return nil
+    }
 
     func attach(_ root: UIView?, as unit: Unit) {
         guard !restored, !applying, let root, window != nil, root.window === window else { return }
@@ -181,25 +252,35 @@ final class KaraokeLandscapeSidebar: UIScrollView {
             if let row = placements[unit], row.source?.window === window, let view = row.view,
                let hit = NativeHitRouter.hit(view, at: point, in: window, event: event) { return hit }
         }
-        return nil
+        return canvasActive ? self : nil
     }
 
     override func layoutSubviews() {
         super.layoutSubviews()
         guard !restored, !applying else { return }
         canvasStage?.frame = bounds
-        if #available(iOS 15.0, *) { (canvasStage as? KaraokeCanvasStageView)?.update() }
+        if #available(iOS 15.0, *), let window {
+            KaraokeCanvasAmbient.shared.placeStage(beside: convert(bounds, to: window))
+            (canvasStage as? KaraokeCanvasStageView)?.update()
+        }
         applying = true
         defer { applying = false }
-        let rows = Unit.allCases.compactMap { placements[$0] }.filter { $0.source?.window === window }
+        let units = canvasIdle ? [Unit.information] : Unit.allCases
+        let rows = units.compactMap { placements[$0] }.filter { $0.source?.window === window }
         let rowHeight = rows.reduce(CGFloat(0)) { $0 + $1.height }
         let gaps = CGFloat(rows.count) * 4 + 8
         let desiredArtwork = min(bounds.width - 8, bounds.height * 0.58)
-        let scale = rowHeight > 0 ? min(0.65, max(0.45, (bounds.height - desiredArtwork - gaps) / rowHeight)) : 0.65
+        let scale = canvasActive ? CGFloat(0.65) : rowHeight > 0 ? min(0.65, max(0.45, (bounds.height - desiredArtwork - gaps) / rowHeight)) : 0.65
         // Keep the cover stable while units arrive; overflow remains scrollable in this sidebar.
         let side = max(80, desiredArtwork)
         artwork.frame = CGRect(x: (bounds.width - side) / 2, y: 0, width: side, height: side)
-        var y = side + 8
+        var y = canvasActive ? max(0, bounds.height - rowHeight * scale - gaps) : side + 8
+        for unit in [Unit.duration, .controls, .dj] {
+            placements[unit]?.view?.alpha = canvasIdle ? 0 : 1
+            placements[unit]?.view?.isUserInteractionEnabled = !canvasIdle
+            placements[unit]?.view?.accessibilityElementsHidden = canvasIdle
+        }
+        updateCanvasButtons()
         for row in rows {
             row.native.place(CGRect(x: 0, y: y, width: bounds.width, height: row.height * scale), in: self, scale: scale)
             if let view = row.view {
@@ -207,11 +288,13 @@ final class KaraokeLandscapeSidebar: UIScrollView {
             }
             y += row.height * scale + 4
         }
-        contentSize = CGSize(width: bounds.width, height: y)
+        contentSize = CGSize(width: bounds.width, height: canvasActive ? bounds.height : y)
+        if canvasActive, contentOffset != .zero { contentOffset = .zero }
     }
 
     func restore() {
         restored = true
+        setCanvasActive(false); canvasIdleWork?.cancel()
         if #available(iOS 15.0, *) { (canvasStage as? KaraokeCanvasStageView)?.stop() }
         refresh?.invalidate(); refresh = nil
         for state in hiddenArtwork.values { state.restore() }

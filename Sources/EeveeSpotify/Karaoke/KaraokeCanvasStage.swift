@@ -2,16 +2,95 @@ import UIKit
 import AVFoundation
 import CoreImage
 import Combine
+import SwiftUI
 
 @available(iOS 15.0, *)
 final class KaraokeCanvasAmbient: ObservableObject {
     static let shared = KaraokeCanvasAmbient()
     @Published private(set) var image: UIImage?
+    private(set) var videoFrame: CGImage?
+    private(set) var sidebarRect = CGRect.zero
+    weak var surface: KaraokeCanvasSurface?
+    func present(_ frame: CGImage?) {
+        videoFrame = frame
+        surface?.display(frame)
+    }
+    func placeStage(beside rect: CGRect) {
+        guard sidebarRect != rect else { return }
+        sidebarRect = rect; surface?.setNeedsLayout()
+    }
     func update(_ image: UIImage?) {
         self.image = image
+        if image == nil { present(nil) }
         if let source = image ?? KaraokeBackgroundView.lastImage {
             KaraokeBackgroundRenderer.shared?.setAlbumArt(source)
         }
+    }
+}
+
+@available(iOS 15.0, *)
+struct KaraokeCanvasBackdrop: UIViewRepresentable {
+    func makeUIView(context: Context) -> KaraokeCanvasSurface {
+        let view = KaraokeCanvasSurface()
+        KaraokeCanvasAmbient.shared.surface = view
+        view.display(KaraokeCanvasAmbient.shared.videoFrame)
+        return view
+    }
+    func updateUIView(_ view: KaraokeCanvasSurface, context: Context) { view.setNeedsLayout() }
+    static func dismantleUIView(_ view: KaraokeCanvasSurface, coordinator: ()) {
+        if KaraokeCanvasAmbient.shared.surface === view { KaraokeCanvasAmbient.shared.surface = nil }
+    }
+}
+
+/// Full-height Canvas with the fork's eased feather into the lyrics column.
+@available(iOS 15.0, *)
+final class KaraokeCanvasSurface: UIView {
+    private let video = CALayer()
+    private let feather = CAGradientLayer()
+    private var frameImage: CGImage?
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isUserInteractionEnabled = false; clipsToBounds = true
+        video.opacity = 0.75; video.masksToBounds = true; layer.addSublayer(video)
+        feather.startPoint = CGPoint(x: 0, y: 0.5); feather.endPoint = CGPoint(x: 1, y: 0.5)
+        feather.colors = [1.0, 1, 0.85, 0.36, 0.10, 0].map { UIColor.black.withAlphaComponent($0).cgColor }
+        video.mask = feather
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    func display(_ frame: CGImage?) {
+        let appearing = frameImage == nil && frame != nil
+        frameImage = frame
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        video.contents = frame
+        CATransaction.commit()
+        setNeedsLayout()
+        if appearing {
+            alpha = 0
+            UIView.animate(withDuration: 0.6, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction]) { self.alpha = 1 }
+        }
+    }
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        guard let window, bounds.width > 0, bounds.height > 0 else { return }
+        let side = convert(KaraokeCanvasAmbient.shared.sidebarRect, from: window)
+        let blend = max(1, side.width * 0.45)
+        let width = min(bounds.width, max(1, side.maxX + blend))
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        video.frame = CGRect(x: 0, y: 0, width: width, height: bounds.height)
+        feather.frame = video.bounds
+        feather.locations = [0, 1 - blend / width, 1 - 0.72 * blend / width, 1 - 0.38 * blend / width, 1 - 0.18 * blend / width, 1].map { NSNumber(value: Double(max(0, $0))) }
+        if let image = frameImage {
+            let source = CGFloat(image.width) / CGFloat(image.height), target = width / bounds.height
+            // Crop like object-fit: cover, with faces anchored at 40% of the video height.
+            if source < target {
+                let height = source / target
+                video.contentsRect = CGRect(x: 0, y: (1 - height) * 0.4, width: 1, height: height)
+            } else {
+                let crop = target / source
+                video.contentsRect = CGRect(x: (1 - crop) / 2, y: 0, width: crop, height: 1)
+            }
+        }
+        CATransaction.commit()
     }
 }
 
@@ -31,7 +110,6 @@ final class KaraokeCanvasStageView: UIView {
     private var observers: [NSObjectProtocol] = []
     private let deliveryLock = NSLock()
     private var deliveryPending = false
-    private let shade = CAGradientLayer()
     private static let cache: NSCache<NSURL, NSData> = {
         let cache = NSCache<NSURL, NSData>()
         cache.countLimit = 6; cache.totalCostLimit = 20 * 1024 * 1024
@@ -41,16 +119,12 @@ final class KaraokeCanvasStageView: UIView {
     override init(frame: CGRect) {
         super.init(frame: frame)
         isUserInteractionEnabled = false; isHidden = true
-        layer.contentsGravity = .resizeAspectFill; clipsToBounds = true; layer.cornerRadius = 10
-        shade.colors = [UIColor.clear.cgColor, UIColor.black.withAlphaComponent(0.15).cgColor, UIColor.black.withAlphaComponent(0.85).cgColor]
-        shade.locations = [0, 0.45, 1]; layer.addSublayer(shade)
         observers.append(NotificationCenter.default.addObserver(forName: UIApplication.willResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
             self?.decoder?.setPlaying(false)
         })
         observers.append(NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in self?.update() })
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
-    override func layoutSubviews() { super.layoutSubviews(); shade.frame = bounds }
 
     func update() {
         guard let window, window.bounds.width > window.bounds.height, UserDefaults.karaokeOptions.landscapeCanvas,
@@ -87,7 +161,8 @@ final class KaraokeCanvasStageView: UIView {
         guard url.scheme == "https" else { return }
         generation = UUID()
         download?.cancel(); decoder?.stop(); decoder = nil
-        layer.contents = nil; isHidden = true; visibilityChanged?(false)
+        isHidden = true; visibilityChanged?(false)
+        KaraokeCanvasAmbient.shared.update(nil)
         mediaURL = url
         let key = generation
         if let data = Self.cache.object(forKey: url as NSURL) { start(data as Data, generation: key); return }
@@ -112,7 +187,7 @@ final class KaraokeCanvasStageView: UIView {
             DispatchQueue.main.async {
                 defer { self.deliveryLock.lock(); self.deliveryPending = false; self.deliveryLock.unlock() }
                 guard self.generation == key else { return }
-                self.layer.contents = frame
+                KaraokeCanvasAmbient.shared.present(frame)
                 if self.isHidden { self.isHidden = false; self.visibilityChanged?(true) }
                 if let ambient { KaraokeCanvasAmbient.shared.update(ambient) }
             }
@@ -132,7 +207,7 @@ final class KaraokeCanvasStageView: UIView {
         lookup = nil; download = nil; decoder?.stop(); decoder = nil
         track = nil; mediaURL = nil; lookedUp = false
         layer.contents = nil; isHidden = true; visibilityChanged?(false)
-        if KaraokeCanvasAmbient.shared.image != nil { KaraokeCanvasAmbient.shared.update(nil) }
+        if KaraokeCanvasAmbient.shared.image != nil || KaraokeCanvasAmbient.shared.videoFrame != nil { KaraokeCanvasAmbient.shared.update(nil) }
     }
     override func didMoveToWindow() { super.didMoveToWindow(); if window == nil { stop() } }
     deinit {
