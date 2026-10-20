@@ -22,6 +22,9 @@ final class KaraokeOverlayPresenter {
     private static var landscapeSidebar: KaraokeLandscapeSidebar?
     private static var updatingFrame = false
     private static var geometryUpdateScheduled = false
+    private static var geometryTransition: UUID?
+    private static weak var geometryCoordinator: AnyObject?
+    private static var geometrySnapshot: UIView?
     private static var wideClipping: [ObjectIdentifier: VideoState] = [:]
     private static weak var positionedHeader: UIView?
     private static var headerBaseTransform = CGAffineTransform.identity
@@ -753,11 +756,11 @@ final class KaraokeOverlayPresenter {
     }
 
     static func scheduleGeometryUpdate() {
-        guard isEnabled, !suspended, !geometryUpdateScheduled else { return }
+        guard isEnabled, !suspended, geometryTransition == nil, !geometryUpdateScheduled else { return }
         geometryUpdateScheduled = true
         DispatchQueue.main.async {
             geometryUpdateScheduled = false
-            guard isEnabled, !suspended else { return }
+            guard isEnabled, !suspended, geometryTransition == nil else { return }
             if isPresented {
                 let changedOrientation = viewport.landscape != isLandscape
                 updateFrame()
@@ -767,15 +770,65 @@ final class KaraokeOverlayPresenter {
     }
 
     static func playerWillTransition(_ controller: UIViewController, with coordinator: UIViewControllerTransitionCoordinator) {
-        guard isEnabled, !suspended, let canvas, let root = controller.viewIfLoaded,
+        guard isEnabled, !suspended, geometryCoordinator !== (coordinator as AnyObject), let canvas, let root = controller.viewIfLoaded,
               canvas.isDescendant(of: root) else { return }
-        scheduleGeometryUpdate()
-        coordinator.animate(alongsideTransition: { _ in scheduleGeometryUpdate() },
-                            completion: { _ in scheduleGeometryUpdate() })
+        let transition = UUID()
+        geometryTransition = transition
+        geometryCoordinator = coordinator as AnyObject
+        idleWork?.cancel()
+        if isPresented, geometrySnapshot == nil, let window = canvas.window,
+           let snapshot = window.snapshotView(afterScreenUpdates: false) {
+            snapshot.frame = window.bounds
+            snapshot.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+            snapshot.isUserInteractionEnabled = false
+            snapshot.accessibilityElementsHidden = true
+            window.addSubview(snapshot)
+            geometrySnapshot = snapshot
+        }
+        // Release the previous layout before UIKit measures the new orientation. Capturing a
+        // placement during the animation pins transient bounds/transforms after rotation ends.
+        UIView.performWithoutAnimation {
+            setFocused(false)
+            restoreLandscape()
+            restoreHeaderGeometry()
+            restoreWideGeometry()
+        }
+        writeDebugLog("[Karaoke][rotation] native layout released before transition")
+        coordinator.animate(alongsideTransition: nil) { [weak root] _ in
+            DispatchQueue.main.async {
+                guard geometryTransition == transition else { return }
+                guard isEnabled, !suspended else {
+                    geometryTransition = nil; geometryCoordinator = nil
+                    removeGeometrySnapshot()
+                    return
+                }
+                // Finish native layout while placement hooks are still suspended. This runs
+                // after the coordinator's other completion callbacks, outside a layout callback.
+                UIView.performWithoutAnimation {
+                    root?.layoutIfNeeded()
+                    geometryTransition = nil; geometryCoordinator = nil
+                    if isPresented { updateFrame(); interact() }
+                    else { restoreIfNeeded() }
+                    hosting?.view.layoutIfNeeded()
+                }
+                removeGeometrySnapshot(animated: true)
+                writeDebugLog("[Karaoke][rotation] rebuilt from final native geometry")
+            }
+        }
+    }
+
+    private static func removeGeometrySnapshot(animated: Bool = false) {
+        guard let snapshot = geometrySnapshot else { return }
+        geometrySnapshot = nil
+        if animated {
+            UIView.animate(withDuration: 0.18, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction]) {
+                snapshot.alpha = 0
+            } completion: { _ in snapshot.removeFromSuperview() }
+        } else { snapshot.removeFromSuperview() }
     }
 
     private static func updateFrame() {
-        guard !updatingFrame else { return }
+        guard !updatingFrame, geometryTransition == nil else { return }
         updatingFrame = true
         defer { updatingFrame = false }
         if !isLandscape { restoreLandscape(); restoreWideGeometry() }
@@ -937,6 +990,8 @@ final class KaraokeOverlayPresenter {
     }
 
     private static func removeHosting() {
+        removeGeometrySnapshot()
+        if suspended || !isEnabled { geometryTransition = nil; geometryCoordinator = nil }
         dismissing = false
         nativeTouchActive = false
         if let monitor = nativeMonitor { monitor.view?.removeGestureRecognizer(monitor) }

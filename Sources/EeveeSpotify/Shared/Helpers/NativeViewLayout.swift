@@ -28,7 +28,7 @@ enum NativeHitRouter {
 final class NativeViewPlacement {
     weak var view: UIView?
     private weak var parent: UIView?
-    private let frame: CGRect
+    private let center: CGPoint
     private let bounds: CGRect
     private let transform: CGAffineTransform
     private let translates: Bool
@@ -37,7 +37,7 @@ final class NativeViewPlacement {
 
     init(_ view: UIView) {
         self.view = view; parent = view.superview
-        frame = view.frame; bounds = view.bounds; transform = view.transform
+        center = view.center; bounds = view.bounds; transform = view.transform
         translates = view.translatesAutoresizingMaskIntoConstraints
         arrangedIndex = (view.superview as? UIStackView)?.arrangedSubviews.firstIndex(of: view)
         func refers(_ item: Any?) -> Bool {
@@ -72,7 +72,7 @@ final class NativeViewPlacement {
 
     func restore() {
         guard let view else { return }
-        view.transform = transform; view.bounds = bounds; view.frame = frame
+        view.transform = transform; view.bounds = bounds; view.center = center
         view.translatesAutoresizingMaskIntoConstraints = translates
         guard let parent, view.superview === parent else { return }
         if let index = arrangedIndex, let stack = parent as? UIStackView, !stack.arrangedSubviews.contains(view) {

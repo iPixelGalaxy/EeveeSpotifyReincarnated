@@ -259,7 +259,9 @@ class KaraokeCompactVisibilityHook: ClassHook<UIView> {
     typealias Group = KaraokeFooterGroup
     @objc(setFrame:) func setFrame(_ frame: CGRect) {
         if let geometry = KaraokeOverlayPresenter.landscapeGeometry(for: target) {
-            orig.setFrame(geometry.frame)
+            // UIView.frame is undefined while the native row has a sidebar transform.
+            orig.setBounds(geometry.bounds)
+            orig.setCenter(geometry.center)
             return
         }
         let adjustedHeader = KaraokeOverlayPresenter.beginNativeHeaderFrame(target)

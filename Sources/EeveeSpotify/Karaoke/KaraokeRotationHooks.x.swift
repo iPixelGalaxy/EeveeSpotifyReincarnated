@@ -15,8 +15,8 @@ class SpotifyApplicationRotationHook: ClassHook<UIApplication> {
 class SpotifyControllerRotationHook: ClassHook<UIViewController> {
     typealias Group = KaraokeGlobalRotationGroup
     func viewWillTransition(to size: CGSize, with coordinator: UIViewControllerTransitionCoordinator) {
-        orig.viewWillTransition(to: size, with: coordinator)
         KaraokeOverlayPresenter.playerWillTransition(target, with: coordinator)
+        orig.viewWillTransition(to: size, with: coordinator)
     }
     func viewDidLoad() {
         orig.viewDidLoad()
