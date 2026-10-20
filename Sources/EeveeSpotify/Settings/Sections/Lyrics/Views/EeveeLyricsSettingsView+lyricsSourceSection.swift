@@ -8,6 +8,7 @@ extension EeveeLyricsSettingsView {
 
         text.append("\n\n")
         text.append("spicylyrics_description".localized)
+        text.append("\n\n" + "lyrics_plugin_sources_description".localized)
 
         text.append("\n\n")
         text.append("petitlyrics_description".localized)
@@ -73,7 +74,7 @@ extension EeveeLyricsSettingsView {
                     musixmatchTokenField()
                 }
 
-                if viewModel.lyricsSource == .spicylyrics {
+                if viewModel.lyricsSource == .spicylyrics || viewModel.lyricsSource == .appleMusic {
                     spicyLyricsApiKeyField()
                 }
                 

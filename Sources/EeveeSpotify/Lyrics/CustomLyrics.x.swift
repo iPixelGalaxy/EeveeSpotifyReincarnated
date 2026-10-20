@@ -116,6 +116,12 @@ private func loadCustomLyricsForTrackId(_ trackId: String, source requestedSourc
         repository = petitLyricsRepository
     case .spicylyrics:
         repository = SpicyLyricsRepository.shared
+    case .appleMusic:
+        repository = PluginLyricsRepository.appleMusic
+    case .spotify:
+        repository = PluginLyricsRepository.spotify
+    case .netease:
+        repository = PluginLyricsRepository.netease
     case .notReplaced:
         throw LyricsError.invalidSource
     }
@@ -200,7 +206,7 @@ private func loadCustomLyricsForTrackId(_ trackId: String, source requestedSourc
 private func publishLineSyncedKaraokeLyrics(_ dto: LyricsDto, trackId: String, source: LyricsSource) {
     guard source.supportsCustomLyricsView, !trackId.isEmpty,
           KaraokeLyricsStore.shared.lyrics(forTrackId: trackId) == nil else { return }
-    guard let karaoke = KaraokeLyricsDto.lineSynced(from: dto, providerName: source.description) else { return }
+    guard let karaoke = KaraokeLyricsDto.lineSynced(from: dto, providerName: dto.providerCredit ?? source.description) else { return }
     KaraokeLyricsStore.shared.set(trackId: trackId, source: source, lyrics: karaoke)
 }
 
@@ -239,6 +245,12 @@ private func loadCustomLyricsForCurrentTrack() throws -> Lyrics {
         repository = petitLyricsRepository
     case .spicylyrics:
         repository = SpicyLyricsRepository.shared
+    case .appleMusic:
+        repository = PluginLyricsRepository.appleMusic
+    case .spotify:
+        repository = PluginLyricsRepository.spotify
+    case .netease:
+        repository = PluginLyricsRepository.netease
     case .notReplaced:
         throw LyricsError.invalidSource
     }

@@ -64,6 +64,7 @@ final class KaraokeLandscapeSidebar: UIScrollView {
     private var restored = false
     private let artwork = UIImageView()
     private var canvasStage: UIView?
+    private var metadataView: UIView?
     private(set) var canvasActive = false
     private(set) var canvasControlsVisible = true
     private var canvasTouchActive = false
@@ -90,11 +91,15 @@ final class KaraokeLandscapeSidebar: UIScrollView {
             let stage = KaraokeCanvasStageView(frame: bounds)
             stage.visibilityChanged = { [weak self] visible in self?.setCanvasActive(visible) }
             insertSubview(stage, at: 0); canvasStage = stage
+            let metadata = KaraokeMetadataView(frame: bounds)
+            metadata.changed = { [weak self] in self?.setNeedsLayout() }
+            addSubview(metadata); metadataView = metadata
         }
         refresh = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
             guard #available(iOS 15.0, *), let self else { return }
             (self.canvasStage as? KaraokeCanvasStageView)?.update()
             if let image = KaraokeBackgroundView.lastImage, self.artwork.image !== image { self.artwork.image = image }
+            self.setNeedsLayout()
         }
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -158,6 +163,7 @@ final class KaraokeLandscapeSidebar: UIScrollView {
     }
 
     func canvasAlpha(for view: UIView) -> CGFloat? {
+        if #available(iOS 15.0, *), (metadataView as? KaraokeMetadataView)?.hides(view) == true { return 0 }
         guard canvasIdle else { return nil }
         if canvasButtons[ObjectIdentifier(view)]?.view === view { return 0 }
         if [Unit.duration, .controls, .dj].contains(where: { placements[$0]?.view === view }) { return 0 }
@@ -290,11 +296,16 @@ final class KaraokeLandscapeSidebar: UIScrollView {
         }
         contentSize = CGSize(width: bounds.width, height: canvasActive ? bounds.height : y)
         if canvasActive, contentOffset != .zero { contentOffset = .zero }
+        if #available(iOS 15.0, *) {
+            metadataView?.frame = CGRect(origin: .zero, size: bounds.size)
+            (metadataView as? KaraokeMetadataView)?.update(from: placements[.information]?.view, options: UserDefaults.karaokeOptions)
+        }
     }
 
     func restore() {
         restored = true
         setCanvasActive(false); canvasIdleWork?.cancel()
+        if #available(iOS 15.0, *) { (metadataView as? KaraokeMetadataView)?.restore() }
         if #available(iOS 15.0, *) { (canvasStage as? KaraokeCanvasStageView)?.stop() }
         refresh?.invalidate(); refresh = nil
         for state in hiddenArtwork.values { state.restore() }

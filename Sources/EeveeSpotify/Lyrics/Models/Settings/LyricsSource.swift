@@ -7,9 +7,12 @@ enum LyricsSource: Int, CaseIterable, CustomStringConvertible {
     case petit
     case notReplaced
     case spicylyrics
+    case appleMusic
+    case spotify
+    case netease
 
     public static var allCases: [LyricsSource] {
-        return [.spicylyrics, .musixmatch, .lrclib, .genius, .petit]
+        return [.spicylyrics, .musixmatch, .appleMusic, .spotify, .lrclib, .netease, .genius, .petit]
     }
 
     var description: String {
@@ -20,6 +23,9 @@ enum LyricsSource: Int, CaseIterable, CustomStringConvertible {
         case .petit:        return "PetitLyrics"
         case .notReplaced:  return "Spotify"
         case .spicylyrics:  return "SpicyLyrics"
+        case .appleMusic:   return "Apple Music"
+        case .spotify:     return "Spotify"
+        case .netease:     return "NetEase"
         }
     }
 

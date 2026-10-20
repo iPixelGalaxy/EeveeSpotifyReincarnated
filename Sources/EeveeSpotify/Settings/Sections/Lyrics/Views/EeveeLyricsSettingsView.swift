@@ -136,6 +136,11 @@ struct EeveeLyricsSettingsView: View {
                 wordSplittingControls()
                 Toggle("karaoke_landscape_canvas".localized, isOn: $karaokeOptions.landscapeCanvas)
                 Text("karaoke_landscape_canvas_detail".localized).font(.caption).foregroundColor(.gray)
+                Picker("karaoke_release_year".localized, selection: $karaokeOptions.releaseYearPosition) {
+                    ForEach(KaraokeReleaseYearPosition.allCases, id: \.self) { position in
+                        Text(position.displayName).tag(position)
+                    }
+                }
                 Toggle("karaoke_smooth_scrolling".localized, isOn: $karaokeOptions.smoothScrolling)
                 Toggle("karaoke_early_scrolling".localized, isOn: $karaokeOptions.earlyScrolling)
                 if karaokeOptions.earlyScrolling {

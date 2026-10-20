@@ -91,7 +91,7 @@ class SpicyLyricsRepository: LyricsRepository {
 
     // MARK: - Parse
 
-    private func parseLyricsData(_ data: Data, httpStatus: Int, trackId: String, query: LyricsSearchQuery, options: LyricsOptions, start: CFAbsoluteTime) throws -> LyricsDto {
+    private func parseLyricsData(_ data: Data, httpStatus: Int, trackId: String, query: LyricsSearchQuery, options: LyricsOptions, start: CFAbsoluteTime, source: LyricsSource) throws -> LyricsDto {
         switch httpStatus {
         case 200:
             break
@@ -113,6 +113,12 @@ class SpicyLyricsRepository: LyricsRepository {
         }
 
         let root = SpicyLyricsJSON((json as? [String: Any])?["Body"] ?? json)
+        if source == .appleMusic {
+            let code = root["source"]?.stringValue?.lowercased() ?? ""
+            let apple = ["aml", "apple", "apple_music", "applemusic"].contains(code)
+                || (code.isEmpty && root["TTMLUploadMetadata"] == nil && root["UploadAttribution"] == nil)
+            guard apple else { throw LyricsError.noSuchSong }
+        }
 
         guard let type = root["Type"]?.stringValue else {
             eeveeLog("[EeveeSpotify][SpicyLyrics] %@ missing Type", trackId)
@@ -121,8 +127,8 @@ class SpicyLyricsRepository: LyricsRepository {
 
         let dto: LyricsDto
         switch type {
-        case "Syllable": dto = parseSyllableLyrics(root, trackId: trackId, query: query, options: options)
-        case "Line":     dto = parseLineLyrics(root, trackId: trackId, query: query, options: options)
+        case "Syllable": dto = parseSyllableLyrics(root, trackId: trackId, query: query, options: options, source: source)
+        case "Line":     dto = parseLineLyrics(root, trackId: trackId, query: query, options: options, source: source)
         case "Static":   dto = parseStaticLyrics(root)
         default:
             eeveeLog("[EeveeSpotify][SpicyLyrics] %@ unknown type '%@'", trackId, type)
@@ -135,7 +141,7 @@ class SpicyLyricsRepository: LyricsRepository {
 
     // MARK: Syllable lyrics
 
-    private func parseSyllableLyrics(_ root: SpicyLyricsJSON, trackId: String, query: LyricsSearchQuery, options: LyricsOptions) -> LyricsDto {
+    private func parseSyllableLyrics(_ root: SpicyLyricsJSON, trackId: String, query: LyricsSearchQuery, options: LyricsOptions, source: LyricsSource) -> LyricsDto {
         guard let content = root["Content"]?.arrayValue else { return emptyDto() }
 
         var lines        = [LyricsLineDto]()
@@ -206,7 +212,7 @@ class SpicyLyricsRepository: LyricsRepository {
 
             KaraokeLyricsStore.shared.set(
                 trackId: trackId,
-                source: .spicylyrics,
+                source: source,
                 lyrics: KaraokeLyricsDto(
                     lines: normalizedKaraokeLines,
                     songWriters: songWriters,
@@ -266,7 +272,7 @@ class SpicyLyricsRepository: LyricsRepository {
 
     // MARK: Line lyrics
 
-    private func parseLineLyrics(_ root: SpicyLyricsJSON, trackId: String, query: LyricsSearchQuery, options: LyricsOptions) -> LyricsDto {
+    private func parseLineLyrics(_ root: SpicyLyricsJSON, trackId: String, query: LyricsSearchQuery, options: LyricsOptions, source: LyricsSource) -> LyricsDto {
         guard let content = root["Content"]?.arrayValue else { return emptyDto() }
 
         var lines        = [LyricsLineDto]()
@@ -317,7 +323,7 @@ class SpicyLyricsRepository: LyricsRepository {
 
             KaraokeLyricsStore.shared.set(
                 trackId: trackId,
-                source: .spicylyrics,
+                source: source,
                 lyrics: KaraokeLyricsDto(
                     lines: SpicyLyricsRepository.normalizeMonotonicTiming(filledKaraokeLines),
                     songWriters: root["SongWriters"]?.arrayValue?.compactMap { $0.stringValue } ?? [],
@@ -400,7 +406,7 @@ class SpicyLyricsRepository: LyricsRepository {
 
     private static func providerCredit(_ root: SpicyLyricsJSON) -> String? {
         guard let code = root["source"]?.stringValue, !code.isEmpty else { return nil }
-        var parts = [providerName]
+        var parts = [creditProviderName(root)]
         if code == "spicy_lyrics" {
             let attribution = root["TTMLUploadMetadata"] ?? root["UploadAttribution"]
             if let maker = attribution?["Maker"]?["username"]?.stringValue, !maker.isEmpty {
@@ -416,6 +422,10 @@ class SpicyLyricsRepository: LyricsRepository {
     // MARK: - LyricsRepository
 
     func getLyrics(_ query: LyricsSearchQuery, options: LyricsOptions) throws -> LyricsDto {
+        try getLyrics(query, options: options, source: .spicylyrics)
+    }
+
+    func getLyrics(_ query: LyricsSearchQuery, options: LyricsOptions, source: LyricsSource) throws -> LyricsDto {
         let trackId = query.spotifyTrackId
         guard trackId.range(of: "^[A-Za-z0-9]{22}$", options: .regularExpression) != nil else {
             eeveeLog("[EeveeSpotify][SpicyLyrics] Not a Spotify track id: '%@'", trackId)
@@ -425,7 +435,7 @@ class SpicyLyricsRepository: LyricsRepository {
         let start = CFAbsoluteTimeGetCurrent()
         let apiKey = UserDefaults.effectiveSpicyLyricsApiKey
         let (data, httpStatus) = try performQuery(trackId: trackId, apiKey: apiKey)
-        var dto = try parseLyricsData(data, httpStatus: httpStatus, trackId: trackId, query: query, options: options, start: start)
+        var dto = try parseLyricsData(data, httpStatus: httpStatus, trackId: trackId, query: query, options: options, start: start, source: source)
 
         let filledContents = LyricsUncensorFill.fill(
             lines: dto.lines.map(\.content),

@@ -19,6 +19,11 @@ enum KaraokePinnedFooterMode: String, Codable, CaseIterable {
     var displayName: String { "karaoke_footer_\(rawValue)".localized }
 }
 
+enum KaraokeReleaseYearPosition: String, Codable, CaseIterable {
+    case off, beforeArtist, afterArtist
+    var displayName: String { "karaoke_release_year_\(rawValue)".localized }
+}
+
 struct KaraokeOptions: Codable, Hashable {
     static let textScaleBaseline: Double = 0.95
     private var textScaleVersion = 1
@@ -36,6 +41,7 @@ struct KaraokeOptions: Codable, Hashable {
     var earlyScrolling = true
     var scrollLeadMs: Double = 250
     var landscapeCanvas = true
+    var releaseYearPosition: KaraokeReleaseYearPosition = .beforeArtist
     var pinnedFooterMode: KaraokePinnedFooterMode = .off
     var experimentalWordSplitting = false
     var wordSplittingEnabled: Bool { experimentalWordSplitting || spaceGravityMode }
@@ -51,7 +57,7 @@ struct KaraokeOptions: Codable, Hashable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case textAlignment, reversedDirection, enabled, blurIntensity, timingOffsetMs, landscapeHeaderOffset, portraitHeaderOffset, allowScreenRecording, textScale, textScaleVersion, spaceGravityMode, smoothScrolling, earlyScrolling, scrollLeadMs, landscapeCanvas, pinnedFooterMode, experimentalWordSplitting, customFontEnabled, customFontURL
+        case textAlignment, reversedDirection, enabled, blurIntensity, timingOffsetMs, landscapeHeaderOffset, portraitHeaderOffset, allowScreenRecording, textScale, textScaleVersion, spaceGravityMode, smoothScrolling, earlyScrolling, scrollLeadMs, landscapeCanvas, releaseYearPosition, pinnedFooterMode, experimentalWordSplitting, customFontEnabled, customFontURL
     }
 
     // Settings saved before these fields existed must keep decoding.
@@ -77,6 +83,7 @@ struct KaraokeOptions: Codable, Hashable {
         earlyScrolling = try container.decodeIfPresent(Bool.self, forKey: .earlyScrolling) ?? true
         scrollLeadMs = min(800, max(0, try container.decodeIfPresent(Double.self, forKey: .scrollLeadMs) ?? 250))
         landscapeCanvas = try container.decodeIfPresent(Bool.self, forKey: .landscapeCanvas) ?? true
+        releaseYearPosition = try container.decodeIfPresent(KaraokeReleaseYearPosition.self, forKey: .releaseYearPosition) ?? .beforeArtist
         pinnedFooterMode = KaraokePinnedFooterMode(rawValue: try container.decodeIfPresent(String.self, forKey: .pinnedFooterMode) ?? "off") ?? .off
         experimentalWordSplitting = try container.decodeIfPresent(Bool.self, forKey: .experimentalWordSplitting) ?? false
         customFontEnabled = try container.decodeIfPresent(Bool.self, forKey: .customFontEnabled) ?? false

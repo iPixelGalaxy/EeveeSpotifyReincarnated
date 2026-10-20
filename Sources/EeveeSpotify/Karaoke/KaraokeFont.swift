@@ -16,9 +16,9 @@ final class KaraokeFont: ObservableObject {
     private let queue = DispatchQueue(label: "com.eevee.karaoke.font", qos: .userInitiated)
     private enum FontError: Error { case invalid }
 
-    func font(ofSize size: CGFloat) -> UIFont {
+    func font(ofSize size: CGFloat, fallback: UIFont? = nil) -> UIFont {
         if let postscriptName, let font = UIFont(name: postscriptName, size: size) { return font }
-        return UIFont.systemFont(ofSize: size, weight: .bold)
+        return fallback ?? UIFont.systemFont(ofSize: size, weight: .bold)
     }
 
     func configure(_ options: KaraokeOptions, force: Bool = false) {

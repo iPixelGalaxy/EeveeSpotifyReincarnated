@@ -2,6 +2,7 @@ import SwiftUI
 
 @available(iOS 15.0, *)
 struct KaraokeCreditsFooterView: View {
+    @ObservedObject private var lyricFont = KaraokeFont.shared
     let lyrics: KaraokeLyricsDto
     var showWriters = true
     var showDetails = true
@@ -65,15 +66,15 @@ struct KaraokeCreditsFooterView: View {
         VStack(alignment: .leading, spacing: 8) {
             if showWriters, !lyrics.songWriters.isEmpty {
                 Text("\("lyrics_written_by".localized) \(lyrics.songWriters.joined(separator: ", "))")
-                    .font(.system(size: 19.5, weight: .semibold))
-                    .foregroundColor(.white.opacity(unfaded ? 1 : 0.6))
+                    .font(Font(lyricFont.font(ofSize: 19.5, fallback: .systemFont(ofSize: 19.5, weight: .semibold))))
+                    .foregroundColor(.white.opacity(0.6))
                     .fixedSize(horizontal: false, vertical: true)
             }
             if showDetails {
                 if let provider = providerLabel {
                     Text("\("lyrics_provided_by".localized): \(provider)\(experimentSuffix)")
-                        .font(.system(size: 19.5, weight: .semibold))
-                        .foregroundColor(.white.opacity(unfaded ? 1 : 0.5))
+                        .font(Font(lyricFont.font(ofSize: 19.5, fallback: .systemFont(ofSize: 19.5, weight: .semibold))))
+                        .foregroundColor(.white.opacity(0.5))
                         .lineLimit(1)
                         .minimumScaleFactor(0.25)
                         .allowsTightening(true)
@@ -88,7 +89,9 @@ struct KaraokeCreditsFooterView: View {
                 }
                 if lyrics.timingExperiments.contains(.spaceGravity) {
                     Text("karaoke_space_gravity_timing_notice".localized)
-                        .font(.caption).foregroundColor(.white.opacity(0.5))
+                        .font(Font(lyricFont.font(ofSize: UIFont.preferredFont(forTextStyle: .caption1).pointSize,
+                                                fallback: .preferredFont(forTextStyle: .caption1))))
+                        .foregroundColor(.white.opacity(0.5))
                 }
             }
         }
@@ -116,6 +119,7 @@ struct KaraokeCreditsFooterView: View {
 
 @available(iOS 15.0, *)
 private struct KaraokeContributorCredit: View {
+    @ObservedObject private var lyricFont = KaraokeFont.shared
     let label: String
     let name: String
     let link: String?
@@ -147,6 +151,6 @@ private struct KaraokeContributorCredit: View {
                     .accessibilityLabel(Text(currentName))
             }
         }
-        .font(.system(size: 19.5, weight: .semibold))
+        .font(Font(lyricFont.font(ofSize: 19.5, fallback: .systemFont(ofSize: 19.5, weight: .semibold))))
     }
 }

@@ -31,6 +31,8 @@ final class KaraokePlaybackTracker {
     // Only ever set from the player observer, unlike lastTrackId (which a lyrics fetch also sets).
     private var observedTrackId: String?
     private var canvasURL: URL?
+    private var metadataTrackID: String?
+    private var releaseYear: String?
 
     private var didDumpStateShape = false
     private weak var playbackController: NSObject?
@@ -72,6 +74,14 @@ final class KaraokePlaybackTracker {
 
         let trackObj = safeValue("track") as AnyObject?
         let canvasSelector = NSSelectorFromString("metadataValueForKey:")
+        let reportedYear = trackObj.flatMap { track -> String? in
+            guard track.responds(to: canvasSelector) else { return nil }
+            for key in ["album_year", "albumYear", "album_release_year", "albumReleaseYear", "release_year", "releaseYear", "year", "album_date", "album_release_date", "release_date"] {
+                let value = track.perform(canvasSelector, with: key)?.takeUnretainedValue()
+                if let year = KaraokeReleaseYear.parse((value as? String) ?? (value as? NSNumber)?.stringValue) { return year }
+            }
+            return nil
+        }
         let reportedCanvas = trackObj.flatMap { track -> URL? in
             guard track.responds(to: canvasSelector),
                   let value = track.perform(canvasSelector, with: "canvas.url")?.takeUnretainedValue() as? String,
@@ -107,6 +117,9 @@ final class KaraokePlaybackTracker {
         queue.async {
             let elapsed = self.lastPositionStamp == 0 ? 0 : max(0, receivedAt - self.lastPositionStamp)
             let changedTrack = trackId != nil && trackId != self.observedTrackId
+            self.metadataTrackID = trackId
+            if let reportedYear, trackId != nil { self.releaseYear = reportedYear }
+            else if changedTrack || trackId == nil { self.releaseYear = nil }
             if let reportedCanvas { self.canvasURL = reportedCanvas }
             else if changedTrack || isNonTrackItem { self.canvasURL = nil }
             let applied = self.lastIsPlaying && self.lastPlaybackSpeed > 0 ? min(abs(self.positionCorrection), elapsed * abs(self.correctionRate)) * (self.positionCorrection < 0 ? -1 : 1) : 0
@@ -226,6 +239,9 @@ final class KaraokePlaybackTracker {
 
     func canvasSnapshot() -> (track: String?, url: URL?, playing: Bool) {
         queue.sync { (observedTrackId, canvasURL, lastIsPlaying) }
+    }
+    func releaseYearSnapshot() -> (track: String?, year: String?) {
+        queue.sync { (metadataTrackID, releaseYear) }
     }
 
     private func uptimeSec() -> TimeInterval {
