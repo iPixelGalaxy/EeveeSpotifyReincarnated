@@ -7,6 +7,7 @@ struct GlassNowPlayingBarGroup: HookGroup {}
 @available(iOS 26.0, *)
 enum GlassNowPlayingBar {
     static let meter = PerfMeter("Glass][NowPlayingBar")
+    private static let landscapeTap = LandscapePlaybackBarTap()
     private static weak var card: UIView?
     private static weak var pane: UIVisualEffectView?
     private static weak var container: UIViewController?
@@ -64,6 +65,7 @@ enum GlassNowPlayingBar {
                   NSStringFromClass(type(of: found)), NSCoder.string(for: found.frame), intercepted ? "intercepted" : "FAILED")
         }
         guard let card else { return }
+        landscapeTap.bind(card: card, container: container)
         NowPlayingBarStartup.nativeReady(card)
         if progress?.view?.isDescendant(of: host) != true {
             if let view = progress?.view, view.layer.mask === progressMask { view.layer.mask = originalProgressMask }
@@ -200,6 +202,50 @@ enum GlassNowPlayingBar {
             }
         }
         return best
+    }
+}
+
+@objc private protocol NativePlaybackBarOpening {
+    func didPerformTap()
+}
+
+@available(iOS 26.0, *)
+private final class LandscapePlaybackBarTap: NSObject, UIGestureRecognizerDelegate {
+    private weak var card: UIView?
+    private weak var controller: UIViewController?
+    private lazy var tap: UITapGestureRecognizer = {
+        let tap = UITapGestureRecognizer(target: self, action: #selector(openPlayer(_:)))
+        tap.cancelsTouchesInView = false
+        tap.delegate = self
+        return tap
+    }()
+
+    func bind(card: UIView, container: UIViewController) {
+        controller = container.children.first { $0.responds(to: NSSelectorFromString("didPerformTap")) }
+        if self.card !== card {
+            self.card?.removeGestureRecognizer(tap)
+            self.card = card
+            card.addGestureRecognizer(tap)
+        }
+        let enabled = controller != nil && card.window.map { $0.bounds.width > $0.bounds.height } == true
+        if tap.isEnabled != enabled { tap.isEnabled = enabled }
+    }
+
+    @objc private func openPlayer(_ gesture: UITapGestureRecognizer) {
+        guard gesture.state == .ended, let controller, let window = card?.window,
+              window.bounds.width > window.bounds.height else { return }
+        // Call Spotify's own tap action; its original gesture delegate uses the unmoved bar region.
+        unsafeBitCast(controller, to: NativePlaybackBarOpening.self).didPerformTap()
+    }
+
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        var candidate = touch.view
+        while let view = candidate, view !== card {
+            if view is UIControl || view.accessibilityTraits.contains(.button)
+                || view.accessibilityTraits.contains(.adjustable) { return false }
+            candidate = view.superview
+        }
+        return true
     }
 }
 

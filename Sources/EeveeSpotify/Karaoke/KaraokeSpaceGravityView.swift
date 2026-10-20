@@ -11,7 +11,6 @@ struct KaraokeSpaceGravityView: View {
     let options: KaraokeOptions
     let size: CGSize
     var showsCredits = true
-    @State private var creditsHeight: CGFloat = 0
 
     var body: some View {
         VStack(spacing: 0) {
@@ -28,26 +27,12 @@ struct KaraokeSpaceGravityView: View {
                 .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .onPreferenceChange(KaraokeGravityCreditsHeight.self) { height in
-            if height.isFinite, abs(height - creditsHeight) > 0.5 { creditsHeight = height }
-        }
     }
 
     private var credits: some View {
-        ScrollView(showsIndicators: false) {
-            KaraokeCreditsFooterView(lyrics: lyrics, unfaded: true, bottomPadding: 0)
-                .fixedSize(horizontal: false, vertical: true)
-                .background(GeometryReader { geometry in
-                    Color.clear.preference(key: KaraokeGravityCreditsHeight.self, value: geometry.size.height)
-                })
-        }
-        .frame(height: min(creditsHeight, max(0, size.height * 0.28)))
+        KaraokeCreditsFooterView(lyrics: lyrics, unfaded: true, bottomPadding: 0)
+            .fixedSize(horizontal: false, vertical: true)
     }
-}
-
-private struct KaraokeGravityCreditsHeight: PreferenceKey {
-    static var defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
 }
 
 @available(iOS 15.0, *)

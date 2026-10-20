@@ -74,7 +74,10 @@ struct KaraokeCreditsFooterView: View {
                     Text("\("lyrics_provided_by".localized): \(provider)\(experimentSuffix)")
                         .font(.system(size: 19.5, weight: .semibold))
                         .foregroundColor(.white.opacity(unfaded ? 1 : 0.5))
-                        .fixedSize(horizontal: false, vertical: true)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.25)
+                        .allowsTightening(true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 if let maker = (resolvedCredits?.key == contributorKey ? resolvedCredits?.maker : contributorKey.makerName) {
                     profile("lyrics_made_by".localized, name: maker, link: lyrics.makerUrl, avatar: lyrics.makerAvatarUrl)

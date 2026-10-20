@@ -152,22 +152,19 @@ private struct KaraokeScrollingLines: View {
     @State private var naturalContentHeight: CGFloat = .infinity
     @State private var pinnedCreditsHeight: CGFloat = 0
     private var viewportHeight: CGFloat {
-        max(1, size.height - (options.pinnedFooterMode == .off ? 0 : min(pinnedCreditsHeight, size.height * 0.28)))
+        max(1, size.height - (options.pinnedFooterMode == .off ? 0 : pinnedCreditsHeight))
     }
 
     @ViewBuilder private var pinnedFooter: some View {
         if options.pinnedFooterMode != .off {
-            ScrollView(showsIndicators: false) {
-                KaraokeCreditsFooterView(lyrics: lyrics, showWriters: options.pinnedFooterMode == .full, unfaded: true)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .background(GeometryReader { geometry in
-                        Color.clear.preference(key: KaraokePinnedCreditsHeight.self, value: geometry.size.height)
-                    })
-            }
-            .frame(height: min(pinnedCreditsHeight, size.height * 0.28))
-            .onPreferenceChange(KaraokePinnedCreditsHeight.self) { height in
-                if height.isFinite, abs(height - pinnedCreditsHeight) > 0.5 { pinnedCreditsHeight = height }
-            }
+            KaraokeCreditsFooterView(lyrics: lyrics, showWriters: options.pinnedFooterMode == .full, unfaded: true)
+                .fixedSize(horizontal: false, vertical: true)
+                .background(GeometryReader { geometry in
+                    Color.clear.preference(key: KaraokePinnedCreditsHeight.self, value: geometry.size.height)
+                })
+                .onPreferenceChange(KaraokePinnedCreditsHeight.self) { height in
+                    if height.isFinite, abs(height - pinnedCreditsHeight) > 0.5 { pinnedCreditsHeight = height }
+                }
         }
     }
 
