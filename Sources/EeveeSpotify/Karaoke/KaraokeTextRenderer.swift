@@ -49,6 +49,7 @@ final class KaraokeTextPlan {
     let baseInk: CGColor
     let fillInks: [CGColor]
     let glowInks: [CGColor]
+    let interludeGlowGradient: CGGradient?
     let sweepGradient: CGGradient?
     let isInterlude: Bool
     let usesLineTiming: Bool
@@ -74,6 +75,9 @@ final class KaraokeTextPlan {
             return inkColor.withAlphaComponent(CGFloat(isInterlude ? dotOpacity.value(at: progress) : 0.5 + 0.45 * progress)).cgColor
         }
         glowInks = (0...64).map { inkColor.withAlphaComponent(CGFloat($0) / 64 * 0.55).cgColor }
+        interludeGlowGradient = isInterlude ? CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(),
+            colors: [inkColor.withAlphaComponent(0.7).cgColor, inkColor.withAlphaComponent(0.25).cgColor,
+                     inkColor.withAlphaComponent(0).cgColor] as CFArray, locations: [0, 0.45, 1]) : nil
         let all = words.flatMap { $0 }
         let lineStart = timingRange?.lowerBound ?? all.map(\.startMs).min() ?? 0
         let lineEnd = max(lineStart + 1, timingRange?.upperBound ?? all.map(\.endMs).max() ?? lineStart + 1)
@@ -399,7 +403,9 @@ final class KaraokeTextCanvas: UIView {
         for glyph in plan.glyphs {
             let part = plan.segments[glyph.segment]
             let progress = min(1, max(0, Double(currentMs - part.highlightStartMs) / Double(max(1, part.highlightEndMs - part.highlightStartMs))))
-            let glow = currentMs < part.highlightStartMs ? 0 : (currentMs <= part.highlightEndMs ? progress : max(0, 1 - Double(currentMs - part.highlightEndMs) / 350))
+            let glow = plan.isInterlude
+                ? KaraokeAnimationCurve.interludeGlow(elapsed: Double(currentMs - part.highlightStartMs), duration: Double(part.highlightEndMs - part.highlightStartMs))
+                : currentMs < part.highlightStartMs ? 0 : (currentMs <= part.highlightEndMs ? progress : max(0, 1 - Double(currentMs - part.highlightEndMs) / 350))
             let fill = plan.fillInks[min(64, max(0, Int(progress * 64)))]
             // Feather over several letters, rather than cutting through one glyph.
             let count = plan.usesLineTiming ? plan.glyphs.count : part.glyphs.count
@@ -408,6 +414,14 @@ final class KaraokeTextCanvas: UIView {
             let (matrix, _) = transform(for: glyph, in: plan)
             context.saveGState()
             context.concatenate(matrix)
+            if glow > 0.01, let gradient = plan.interludeGlowGradient {
+                context.saveGState()
+                context.setAlpha(CGFloat(glow))
+                let center = CGPoint(x: glyph.bounds.midX, y: glyph.bounds.midY)
+                context.drawRadialGradient(gradient, startCenter: center, startRadius: 0,
+                    endCenter: center, endRadius: max(4, max(glyph.bounds.width, glyph.bounds.height)) * 1.5, options: [])
+                context.restoreGState()
+            }
             if glow > 0.01 {
                 context.setShadow(offset: .zero, blur: CGFloat(4 + 10 * glow), color: plan.glowInks[min(64, max(0, Int(glow * 64)))])
             }

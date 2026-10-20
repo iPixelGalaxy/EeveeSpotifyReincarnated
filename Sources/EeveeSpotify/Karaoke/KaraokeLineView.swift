@@ -82,14 +82,22 @@ private struct KaraokeInterludeView: View {
             ForEach(0..<3) { index in
                 let progress = min(1, max(0, (Double(currentMs - startMs) - Double(index) * duration) / duration))
                 let elapsed = Double(currentMs - startMs) - Double(index) * duration
-                let glow = elapsed < 0 ? 0 : (elapsed <= duration ? progress : max(0, 1 - (elapsed - duration) / 350))
+                let glow = KaraokeAnimationCurve.interludeGlow(elapsed: elapsed, duration: duration)
                 Circle()
                     .fill(Color.white)
                     .frame(width: fontSize * 0.5, height: fontSize * 0.5)
+                    .opacity(Self.opacity.value(at: progress))
+                    .background(
+                        RadialGradient(stops: [
+                            .init(color: .white.opacity(glow * 0.7), location: 0),
+                            .init(color: .white.opacity(glow * 0.25), location: 0.45),
+                            .init(color: .clear, location: 1)
+                        ], center: .center, startRadius: 0, endRadius: fontSize * 0.75)
+                        .frame(width: fontSize * 1.5, height: fontSize * 1.5)
+                    )
+                    .shadow(color: .white.opacity(glow * 0.8), radius: 3)
                     .scaleEffect(Self.scale.value(at: progress))
                     .offset(y: fontSize * Self.lift.value(at: progress))
-                    .opacity(Self.opacity.value(at: progress))
-                    .shadow(color: .white.opacity(glow * 0.45), radius: 15)
             }
         }
         .padding(.vertical, 22)

@@ -44,6 +44,14 @@ struct KaraokeAnimationCurve {
     static let wordScale = KaraokeAnimationCurve(points: [(0, 1), (0.7, 1.0505), (1, 1)])
     static let letterScale = KaraokeAnimationCurve(points: [(0, 1), (0.7, 1.175), (1, 1)])
     static let glow = KaraokeAnimationCurve(points: [(0, 0), (0.15, 1), (0.6, 1), (1, 0)])
+    private static let interludeGlowCurve = KaraokeAnimationCurve(points: [(0, 0.25), (0.35, 1), (1, 1)])
+
+    static func interludeGlow(elapsed: Double, duration: Double) -> Double {
+        guard elapsed >= 0 else { return 0 }
+        let duration = max(1, duration)
+        if elapsed > duration { return max(0, 1 - (elapsed - duration) / 350) }
+        return min(1, max(0, interludeGlowCurve.value(at: elapsed / duration)))
+    }
     static let yOffset = KaraokeAnimationCurve(points: [(0, 0), (0.9, -1.0 / 60), (1, 0)])
     static let letterYOffset = KaraokeAnimationCurve(points: [(0, 0), (0.9, -1.0 / 56), (1, 0)])
 }
